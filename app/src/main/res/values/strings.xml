@@ -17,6 +17,10 @@
     <string name="MenuFileOpenFileBigObject">File has more than 500k triangles. Processing could be slow.</string>
     <string name="MenuFileOpenFileLoading">Loading file…</string>
     <string name="MenuFileDelete">Remove model</string>
+    <string name="ModelContextMenuTitle">Model actions</string>
+    <string name="ModelContextFillBed">Fill bed with this model</string>
+    <string name="ModelContextFillBedFinished">Added %1$d copies.</string>
+    <string name="ModelContextFillBedNoRoom">No more copies fit on the bed.</string>
     <string name="MenuFileAIGenerator">Model\nfrom photo</string>
     <string name="MenuFileAIGeneratorPleaseWaitSetup">Please wait…</string>
     <string name="MenuFileAIGeneratorErrorNotLoadedUserAccount">Error: user info not fetched yet.</string>

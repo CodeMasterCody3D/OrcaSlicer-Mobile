@@ -61,8 +61,8 @@ public class Bed3D {
         }
     }
 
-    public void arrange(Model model) {
-        Native.bed_arrange(pointer, model.pointer);
+    public boolean arrange(Model model) {
+        return Native.bed_arrange(pointer, model.pointer);
     }
 
     public Vec3d getVolumeMin() {

@@ -16,6 +16,10 @@
     <string name="MenuFileOpenFileBigObject">Файл содержит более 500к треугольников. Нарезка может быть медленной.</string>
     <string name="MenuFileOpenFileLoading">Загрузка файла…</string>
     <string name="MenuFileDelete">Убрать модель</string>
+    <string name="ModelContextMenuTitle">Действия с моделью</string>
+    <string name="ModelContextFillBed">Заполнить стол этой моделью</string>
+    <string name="ModelContextFillBedFinished">Добавлено копий: %1$d.</string>
+    <string name="ModelContextFillBedNoRoom">Больше копий не помещается на стол.</string>
     <string name="MenuFileAIGenerator">Модель\nпо фото</string>
     <string name="MenuFileAIGeneratorPleaseWaitSetup">Пожалуйста, подождите…</string>
     <string name="MenuFileAIGeneratorErrorNotLoadedUserAccount">Ошибка: данные о пользователе пока не загружены.</string>

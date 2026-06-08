@@ -29,6 +29,7 @@ import ru.ytkab0bp.slicebeam.slic3r.Model;
 import ru.ytkab0bp.slicebeam.slic3r.Slic3rUtils;
 import ru.ytkab0bp.slicebeam.theme.ThemesRepo;
 import ru.ytkab0bp.slicebeam.utils.DoubleMatrix;
+import ru.ytkab0bp.slicebeam.utils.FillBedPlanner;
 import ru.ytkab0bp.slicebeam.utils.Prefs;
 import ru.ytkab0bp.slicebeam.utils.Vec3d;
 import ru.ytkab0bp.slicebeam.utils.ViewUtils;
@@ -38,6 +39,7 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     private final static float FOV = 60f;
     private final static float NEAR_PLANE = 10f;
     private final static float FAR_PLANE = 1000f;
+    private final static int MAX_FILL_BED_OBJECTS = 256;
 
     private Camera camera = new Camera();
     private double[] projectionMatrix = new double[16];
@@ -143,6 +145,19 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
     public int getSelectedObject() {
         return selectedObject;
+    }
+
+    public boolean setSelectedObject(int selectedObject) {
+        if (model == null && selectedObject != -1) return false;
+        if (model != null && (selectedObject < -1 || selectedObject >= model.getObjectsCount())) return false;
+        if (this.selectedObject == selectedObject) return false;
+
+        this.selectedObject = selectedObject;
+        selX = selY = selZ = 0;
+        selRotX = selRotY = selRotZ = 0;
+        selScaleX = selScaleY = selScaleZ = 1;
+        SliceBeam.EVENT_BUS.fireEvent(new SelectedObjectChangedEvent());
+        return true;
     }
 
     public void invalidateGlModel(int i) {
@@ -373,6 +388,42 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         }
         SliceBeam.EVENT_BUS.fireEvent(new ObjectsListChangedEvent());
         return true;
+    }
+
+    public int fillBedWithSelectedObject() {
+        if (model == null || bed == null || !bed.isValid() || isViewerEnabled || selectedObject == -1) return 0;
+
+        int sourceObject = selectedObject;
+        int attempts = FillBedPlanner.copyAttemptsForLimit(model.getObjectsCount(), MAX_FILL_BED_OBJECTS);
+        if (attempts == 0) return 0;
+
+        Model sourceModel = new Model();
+        int added = 0;
+        try {
+            sourceModel.addObject(model, sourceObject);
+            for (int i = 0; i < attempts; i++) {
+                int addedObject = model.getObjectsCount();
+                model.addObject(sourceModel, 0);
+                model.resetBoundingBox();
+
+                if (!bed.arrange(model)) {
+                    model.deleteObject(addedObject);
+                    model.resetBoundingBox();
+                    bed.arrange(model);
+                    break;
+                }
+                added++;
+            }
+        } finally {
+            sourceModel.release();
+        }
+
+        if (added > 0) {
+            model.resetBoundingBox();
+            resetGlModels();
+            SliceBeam.EVENT_BUS.fireEvent(new ObjectsListChangedEvent());
+        }
+        return added;
     }
 
     public int raycastObjectIndex(float x, float y) {

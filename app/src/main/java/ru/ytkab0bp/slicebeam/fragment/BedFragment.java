@@ -22,6 +22,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.dynamicanimation.animation.FloatValueHolder;
 import androidx.dynamicanimation.animation.SpringAnimation;
@@ -168,6 +169,32 @@ public class BedFragment extends Fragment {
         menu.show(from, this);
     }
 
+    private void showModelContextMenu(int objectIndex) {
+        Context ctx = getContext();
+        if (ctx == null || glView == null || objectIndex == -1) return;
+        if (currentUnfoldMenu != null) {
+            currentUnfoldMenu.dismiss();
+        }
+
+        new BeamAlertDialogBuilder(ctx)
+                .setTitle(R.string.ModelContextMenuTitle)
+                .setItems(new CharSequence[] {
+                        ctx.getString(R.string.ModelContextFillBed)
+                }, (dialog, which) -> {
+                    if (which != 0) return;
+                    glView.fillBedWithSelectedModel(addedCopies -> {
+                        updateModel();
+                        Toast.makeText(ctx,
+                                addedCopies > 0
+                                        ? ctx.getString(R.string.ModelContextFillBedFinished, addedCopies)
+                                        : ctx.getString(R.string.ModelContextFillBedNoRoom),
+                                Toast.LENGTH_SHORT).show();
+                    });
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
     public void loadGCode(File f) {
         gCodeResult = new GCodeProcessorResult(f);
         ViewUtils.postOnMainThread(()-> {
@@ -272,6 +299,7 @@ public class BedFragment extends Fragment {
         glView = new GLView(ctx);
         glView.getRenderer().setModel(model);
         glView.getRenderer().setGCodeViewer(gCodeResult);
+        glView.setOnModelLongPressListener((view, objectIndex, x, y) -> showModelContextMenu(objectIndex));
         overlayLayout = new FrameLayout(ctx) {
             @Override
             protected void onSizeChanged(int w, int h, int oldw, int oldh) {
