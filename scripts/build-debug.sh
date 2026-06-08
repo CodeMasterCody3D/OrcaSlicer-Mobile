@@ -8,4 +8,9 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME
 
 cd "$(dirname "$0")/.."
 
-./gradlew :app:assembleDebug --no-daemon --stacktrace
+if [[ "${1:-}" == "--prebuilt" ]]; then
+  scripts/fetch-upstream-native-libs.sh
+  ./gradlew :app:assembleDebug -PusePrebuiltNative=true --no-daemon --stacktrace
+else
+  ./gradlew :app:assembleDebug --no-daemon --stacktrace
+fi

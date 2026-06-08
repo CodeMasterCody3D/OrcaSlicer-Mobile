@@ -26,7 +26,7 @@ Configuration check:
 
 Result: **successful**.
 
-Debug build wrapper:
+Source-native debug build wrapper:
 
 ```bash
 scripts/build-debug.sh
@@ -39,6 +39,26 @@ Current first failure:
 ```text
 ninja: error: '../../../../src/main/jniImports/oneTBB/lib/arm64-v8a/libtbb.a', needed by '../../../../build/intermediates/cxx/Release/.../obj/arm64-v8a/libslic3r.so', missing and no known rule to make it
 ```
+
+Prebuilt-native debug build wrapper:
+
+```bash
+scripts/build-debug.sh --prebuilt
+```
+
+Result: **successful**. This mode downloads the upstream Slice Beam `0.3.0` APK, extracts non-duplicate runtime `.so` libraries into ignored generated directory `app/src/prebuiltNative/jniLibs/`, skips CMake, and packages an installable bootstrap APK.
+
+Verified APK metadata:
+
+```text
+package: com.codemastercody3d.orcaslicermobile
+versionCode: 1
+versionName: 0.1.0-bootstrap
+minSdk: 21
+targetSdk: 35
+```
+
+This mode is for fast Android app/UI/profile-port iteration. Full source-native builds still require the missing Boost/oneTBB/OCCT prebuilts below.
 
 ## Native prebuilt check
 

@@ -3,6 +3,7 @@ plugins {
 }
 
 def commit = getGitCommitHash(file('.'))
+def usePrebuiltNative = (project.findProperty("usePrebuiltNative") ?: "false").toString().toBoolean()
 
 android {
     namespace 'ru.ytkab0bp.slicebeam'
@@ -18,18 +19,23 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders = [fileProviderAuthority: "${applicationId}.provider"]
 
-        externalNativeBuild {
-            cmake {
-                arguments '-DANDROID_STL=c++_shared', '-DANDROID_PLATFORM=21',
-                        '-DCMAKE_BUILD_TYPE=Release', // Disabling this results in drastically degradation of slicing times on debug builds
-                        "-DSLIC3R_VERSION=\"${defaultConfig.versionName}\"",
-                        "-DSLIC3R_BUILD_ID=\"${defaultConfig.versionCode}\""
+        if (!usePrebuiltNative) {
+            externalNativeBuild {
+                cmake {
+                    arguments '-DANDROID_STL=c++_shared', '-DANDROID_PLATFORM=21',
+                            '-DCMAKE_BUILD_TYPE=Release', // Disabling this results in drastically degradation of slicing times on debug builds
+                            "-DSLIC3R_VERSION=\"${defaultConfig.versionName}\"",
+                            "-DSLIC3R_BUILD_ID=\"${defaultConfig.versionCode}\""
+                }
             }
         }
     }
     sourceSets {
         main {
             jniLibs.srcDirs += file('src/main/occt/jniLibs')
+            if (usePrebuiltNative) {
+                jniLibs.srcDirs += file('src/prebuiltNative/jniLibs')
+            }
         }
     }
 
@@ -59,11 +65,14 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
-    externalNativeBuild {
-        cmake {
-            path file('CMakeLists.txt')
+    ndkVersion "23.1.7779620"
+
+    if (!usePrebuiltNative) {
+        externalNativeBuild {
+            cmake {
+                path file('CMakeLists.txt')
+            }
         }
-        ndkVersion "23.1.7779620"
     }
 
     buildFeatures {

@@ -42,3 +42,5 @@ app/src/main/occt/jniLibs/x86
 app/src/main/occt/jniLibs/x86_64
 app/src/main/occt/include
 app/src/main/assets/update.json
+vendor/upstream-apk/
+app/src/prebuiltNative/jniLibs/
