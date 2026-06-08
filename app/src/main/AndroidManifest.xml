@@ -55,7 +55,7 @@
         <activity android:name=".SetupActivity" android:exported="false"/>
         <activity android:name=".SafeStartActivity" android:exported="false"/>
         <provider
-            android:authorities="ru.ytkab0bp.slicebeam.provider"
+            android:authorities="${fileProviderAuthority}"
             android:name="androidx.core.content.FileProvider"
             android:grantUriPermissions="true"
             android:exported="false">

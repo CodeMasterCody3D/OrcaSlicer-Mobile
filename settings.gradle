@@ -1,4 +1,4 @@
-rootProject.name = "Slice Beam"
+rootProject.name = "OrcaSlicer Mobile"
 include ':app', ':eventbus', ':eventbus_api', ':eventbus_processor', ':sapil'
 
 project(':eventbus').projectDir = file('EventBus/eventbus')

@@ -21,7 +21,7 @@
     <string name="MenuFileAIGeneratorErrorNotLoadedUserAccount">Ошибка: данные о пользователе пока не загружены.</string>
     <string name="MenuFileAIGeneratorFromCamera">Сделать фото</string>
     <string name="MenuFileAIGeneratorFromGallery">Выбрать из галереи</string>
-    <string name="MenuFileAIGeneratorRemaining">Осталось: %d / %d генераций</string>
+    <string name="MenuFileAIGeneratorRemaining">Осталось: %1$d / %2$d генераций</string>
     <string name="MenuFileAIGeneratorUploading">Загрузка изображения…</string>
     <string name="MenuFileAIGeneratorProcessing">Обработка изображения…</string>
     <string name="MenuFileAIGeneratorDownloading">Скачивание модели…</string>
@@ -96,9 +96,9 @@
     <string name="MenuTransform">Изменение</string>
     <string name="MenuTransformScale">Размер</string>
     <string name="MenuTransformScaleLink">Сохранять соотношение сторон</string>
-    <string name="MenuTransformScaleXValue">X = %.2f %% | %.2f мм</string>
-    <string name="MenuTransformScaleYValue">Y = %.2f %% | %.2f мм</string>
-    <string name="MenuTransformScaleZValue">Z = %.2f %% | %.2f мм</string>
+    <string name="MenuTransformScaleXValue">X = %1$.2f %% | %2$.2f мм</string>
+    <string name="MenuTransformScaleYValue">Y = %1$.2f %% | %2$.2f мм</string>
+    <string name="MenuTransformScaleZValue">Z = %1$.2f %% | %2$.2f мм</string>
     <string name="MenuTransformScaleMM">Ввод в мм</string>
     <string name="MenuTransformMirror">Отразить</string>
     <string name="MenuTransformMirrorX">Отразить по X</string>
@@ -113,7 +113,7 @@
     <string name="MenuSliceInfoWeight">г.</string>
     <string name="MenuSliceInfoLength">мм.</string>
     <string name="MenuSliceLayers">Слои</string>
-    <string name="MenuSliceInfoLayers">Слои %d - %d</string>
+    <string name="MenuSliceInfoLayers">Слои %1$d - %2$d</string>
     <string name="MenuSliceExportToFile">Экспорт. в файл</string>
     <string name="MenuSliceShare">Отправка</string>
     <string name="MenuSliceSendToPrinter">Отправ. на принтер</string>

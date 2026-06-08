@@ -1,5 +1,5 @@
 <resources>
-    <string name="AppName" translatable="false">Slice Beam</string>
+    <string name="AppName" translatable="false">OrcaSlicer Mobile</string>
     <string name="SlotBed">Preview</string>
     <string name="SlotPrintConfig">Print</string>
     <string name="SlotPrintConfigTooltip">Print profile</string>
@@ -22,7 +22,7 @@
     <string name="MenuFileAIGeneratorErrorNotLoadedUserAccount">Error: user info not fetched yet.</string>
     <string name="MenuFileAIGeneratorFromCamera">Take a photo</string>
     <string name="MenuFileAIGeneratorFromGallery">Choose from gallery</string>
-    <string name="MenuFileAIGeneratorRemaining">Remaining: %d / %d generations</string>
+    <string name="MenuFileAIGeneratorRemaining">Remaining: %1$d / %2$d generations</string>
     <string name="MenuFileAIGeneratorUploading">Uploading image…</string>
     <string name="MenuFileAIGeneratorProcessing">Processing image…</string>
     <string name="MenuFileAIGeneratorDownloading">Downloading model…</string>
@@ -98,9 +98,9 @@
     <string name="MenuTransform">Transform</string>
     <string name="MenuTransformScale">Scale</string>
     <string name="MenuTransformScaleLink">Save aspect ratio</string>
-    <string name="MenuTransformScaleXValue">X = %.2f %% | %.2f mm</string>
-    <string name="MenuTransformScaleYValue">Y = %.2f %% | %.2f mm</string>
-    <string name="MenuTransformScaleZValue">Z = %.2f %% | %.2f mm</string>
+    <string name="MenuTransformScaleXValue">X = %1$.2f %% | %2$.2f mm</string>
+    <string name="MenuTransformScaleYValue">Y = %1$.2f %% | %2$.2f mm</string>
+    <string name="MenuTransformScaleZValue">Z = %1$.2f %% | %2$.2f mm</string>
     <string name="MenuTransformScaleMM">Input in mm</string>
     <string name="MenuTransformMirror">Mirror</string>
     <string name="MenuTransformMirrorX">Mirror X</string>
@@ -115,7 +115,7 @@
     <string name="MenuSliceInfoWeight">g.</string>
     <string name="MenuSliceInfoLength">mm.</string>
     <string name="MenuSliceLayers">Layers</string>
-    <string name="MenuSliceInfoLayers">Layers %d - %d</string>
+    <string name="MenuSliceInfoLayers">Layers %1$d - %2$d</string>
     <string name="MenuSliceExportToFile">Export to file</string>
     <string name="MenuSliceShare">Share</string>
     <string name="MenuSliceSendToPrinter">Send to printer</string>
@@ -147,7 +147,7 @@
     <string name="IntroConfigured">All seems to be configured.\nJust tap finish!</string>
     <string name="IntroFinish">Finish</string>
     <string name="IntroEarlyAccess">Early access</string>
-    <string name="IntroEarlyAccessMessage">You are using an Early Access of Slice Beam.\nPlease note that some features may be unavailable, buggy or work not as expected.\nPlease subscribe to developer\'s Telegram for app\'s news.</string>
+    <string name="IntroEarlyAccessMessage">You are using an early bootstrap build of OrcaSlicer Mobile.\nSome features may be unavailable, buggy, or still inherited from Slice Beam until the Android port is completed.</string>
     <string name="SettingsResetToDefault">Reset to defaults</string>
     <string name="SettingsResetToDefaultTitle">Are you sure?</string>
     <string name="SettingsResetToDefaultDescription">This action can not be undone.</string>
@@ -168,7 +168,7 @@
     <string name="SettingsInterfaceResolutionScale">3D Resolution scale</string>
     <string name="SettingsInterfaceResolutionScaleDescription">May improve performance by lowering resolution</string>
     <string name="SettingsAbout">About app</string>
-    <string name="SettingsAboutVersion">v%s\nBased on PrusaSlicer\n\nCreated by YTKAB0BP</string>
+    <string name="SettingsAboutVersion">v%s\nOrcaSlicer Mobile bootstrap\nBased on Slice Beam, PrusaSlicer, Slic3r, and OrcaSlicer-compatible profiles\n\nMaintained by CodeMasterCody3D</string>
     <string name="SettingsProfileCopy">%s - Copy</string>
     <string name="SettingsCloneProfile">Clone current</string>
     <string name="SettingsDeleteProfile">Delete current</string>
