@@ -17,6 +17,7 @@
     <string name="MenuFileOpenFileBigObject">File has more than 500k triangles. Processing could be slow.</string>
     <string name="MenuFileOpenFileLoading">Loading file…</string>
     <string name="MenuFileDelete">Remove model</string>
+    <string name="BedContextMenuTitle">Bed actions</string>
     <string name="ModelContextMenuTitle">Model actions</string>
     <string name="ModelContextFillBed">Fill bed with this model</string>
     <string name="ModelContextFillBedFinished">Added %1$d copies.</string>

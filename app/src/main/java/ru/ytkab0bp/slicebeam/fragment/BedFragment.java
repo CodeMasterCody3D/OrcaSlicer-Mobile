@@ -195,6 +195,26 @@ public class BedFragment extends Fragment {
                 .show();
     }
 
+    private void showBedContextMenu() {
+        Context ctx = getContext();
+        if (ctx == null || glView == null || glView.getRenderer().getModel() == null) return;
+        if (currentUnfoldMenu != null) {
+            currentUnfoldMenu.dismiss();
+        }
+
+        new BeamAlertDialogBuilder(ctx)
+                .setTitle(R.string.BedContextMenuTitle)
+                .setItems(new CharSequence[] {
+                        ctx.getString(R.string.MenuOrientationArrange)
+                }, (dialog, which) -> {
+                    if (which != 0) return;
+                    glView.arrange();
+                    Toast.makeText(ctx, R.string.MenuOrientationArrangeFinished, Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
     public void loadGCode(File f) {
         gCodeResult = new GCodeProcessorResult(f);
         ViewUtils.postOnMainThread(()-> {
@@ -300,6 +320,7 @@ public class BedFragment extends Fragment {
         glView.getRenderer().setModel(model);
         glView.getRenderer().setGCodeViewer(gCodeResult);
         glView.setOnModelLongPressListener((view, objectIndex, x, y) -> showModelContextMenu(objectIndex));
+        glView.setOnBedLongPressListener((view, x, y) -> showBedContextMenu());
         overlayLayout = new FrameLayout(ctx) {
             @Override
             protected void onSizeChanged(int w, int h, int oldw, int oldh) {
@@ -596,20 +617,22 @@ public class BedFragment extends Fragment {
                         ViewUtils.postOnMainThread(()-> glView.queueEvent(this));
                         return;
                     }
-                    Vec3d center = bed.getVolumeMin().center(bed.getVolumeMax());
                     Vec3d objMin = new Vec3d(), objMax = new Vec3d();
                     Vec3d objTranslate = new Vec3d();
                     for (int i = 0; i < m.getObjectsCount(); i++) {
                         m.getTranslation(i, objTranslate);
                         m.getBoundingBoxExact(i, objMin, objMax);
-
-                        m.translate(i, -objTranslate.x + center.x, -objTranslate.y + center.y, -objTranslate.z + (objMax.z - objMin.z) / 2);
+                        // Only fix Z (floor level); arrange will handle X/Y placement
+                        m.translate(i, objTranslate.x, objTranslate.y, -objTranslate.z + (objMax.z - objMin.z) / 2);
                     }
 
                     for (int i = 0; i < m.getObjectsCount(); i++) {
                         model.addObject(m, i);
                     }
                     m.release();
+                    model.resetBoundingBox();
+                    bed.arrange(model);
+                    glView.getRenderer().resetGlModels();
                 }
             });
         } else {

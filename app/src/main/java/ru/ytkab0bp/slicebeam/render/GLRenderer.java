@@ -426,6 +426,44 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         return added;
     }
 
+    public int fillBedWithSelectedObjectStep() {
+        if (model == null || bed == null || !bed.isValid() || isViewerEnabled || selectedObject == -1) return 0;
+        if (FillBedPlanner.copyAttemptsForLimit(model.getObjectsCount(), MAX_FILL_BED_OBJECTS) == 0) return 0;
+
+        int sourceObject = selectedObject;
+        Model sourceModel = new Model();
+        try {
+            sourceModel.addObject(model, sourceObject);
+
+            int addedObject = model.getObjectsCount();
+            model.addObject(sourceModel, 0);
+            model.resetBoundingBox();
+
+            Vec3d posBefore = new Vec3d();
+            model.getTranslation(addedObject, posBefore);
+
+            bed.arrange(model);
+
+            Vec3d posAfter = new Vec3d();
+            model.getTranslation(addedObject, posAfter);
+
+            // If arrange didn't move the new object, the bed is full — it couldn't be placed
+            if (Math.abs(posAfter.x - posBefore.x) < 0.01 && Math.abs(posAfter.y - posBefore.y) < 0.01) {
+                model.deleteObject(addedObject);
+                model.resetBoundingBox();
+                bed.arrange(model);
+                return 0;
+            }
+
+            model.resetBoundingBox();
+            resetGlModels();
+            SliceBeam.EVENT_BUS.fireEvent(new ObjectsListChangedEvent());
+            return 1;
+        } finally {
+            sourceModel.release();
+        }
+    }
+
     public int raycastObjectIndex(float x, float y) {
         if (model == null) return -1;
         double minDistance = Double.MAX_VALUE;

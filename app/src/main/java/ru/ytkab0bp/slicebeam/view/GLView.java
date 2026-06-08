@@ -37,6 +37,8 @@ import ru.ytkab0bp.slicebeam.utils.Vec3d;
 import ru.ytkab0bp.slicebeam.utils.ViewUtils;
 
 public class GLView extends GLSurfaceView implements IThemeView {
+    private static final long FILL_BED_STEP_DELAY_MS = 16L;
+
     private GLRenderer renderer;
 
     private float lastX, lastY;
@@ -49,12 +51,18 @@ public class GLView extends GLSurfaceView implements IThemeView {
     private boolean longClickGesture;
     private boolean longClickMoved;
     private boolean isScaling;
+    private boolean fillBedInProgress;
     private int longClickTargetObject = -1;
 
     private OnModelLongPressListener onModelLongPressListener;
+    private OnBedLongPressListener onBedLongPressListener;
 
     public interface OnModelLongPressListener {
         void onModelLongPress(GLView view, int objectIndex, float x, float y);
+    }
+
+    public interface OnBedLongPressListener {
+        void onBedLongPress(GLView view, float x, float y);
     }
 
     public interface FillBedCallback {
@@ -88,6 +96,14 @@ public class GLView extends GLSurfaceView implements IThemeView {
         }
     };
 
+    private Runnable bedLongClick = () -> {
+        if (getRenderer().getModel() == null || getRenderer().getBed() == null) return;
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        if (onBedLongPressListener != null) {
+            onBedLongPressListener.onBedLongPress(this, lastX, lastY);
+        }
+    };
+
     private Path path = new Path();
     private Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private Paint xferPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -118,6 +134,10 @@ public class GLView extends GLSurfaceView implements IThemeView {
         this.onModelLongPressListener = onModelLongPressListener;
     }
 
+    public void setOnBedLongPressListener(OnBedLongPressListener onBedLongPressListener) {
+        this.onBedLongPressListener = onBedLongPressListener;
+    }
+
     public void arrange() {
         if (renderer.getModel() == null) return;
 
@@ -129,14 +149,25 @@ public class GLView extends GLSurfaceView implements IThemeView {
     }
 
     public void fillBedWithSelectedModel(FillBedCallback callback) {
-        if (renderer.getModel() == null) return;
+        if (renderer.getModel() == null || fillBedInProgress) return;
 
+        fillBedInProgress = true;
+        fillBedWithSelectedModelStep(callback, 0);
+    }
+
+    private void fillBedWithSelectedModelStep(FillBedCallback callback, int totalAddedCopies) {
         queueEvent(() -> {
-            int addedCopies = renderer.fillBedWithSelectedObject();
+            int addedCopies = renderer.fillBedWithSelectedObjectStep();
             requestRender();
             ViewUtils.postOnMainThread(() -> {
+                if (addedCopies > 0) {
+                    postDelayed(() -> fillBedWithSelectedModelStep(callback, totalAddedCopies + addedCopies), FILL_BED_STEP_DELAY_MS);
+                    return;
+                }
+
+                fillBedInProgress = false;
                 if (callback != null) {
-                    callback.onFillBedComplete(addedCopies);
+                    callback.onFillBedComplete(totalAddedCopies);
                 }
             });
         });
@@ -312,6 +343,7 @@ public class GLView extends GLSurfaceView implements IThemeView {
 
         if (e.getPointerCount() > 2) {
             removeCallbacks(longClick);
+            removeCallbacks(bedLongClick);
             longClickGesture = false;
             return true;
         }
@@ -319,6 +351,7 @@ public class GLView extends GLSurfaceView implements IThemeView {
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             if (e.getPointerCount() == 2) {
                 removeCallbacks(longClick);
+                removeCallbacks(bedLongClick);
                 longClickGesture = false;
                 calcStartFocus(e);
                 fromTwoPointers = true;
@@ -333,6 +366,8 @@ public class GLView extends GLSurfaceView implements IThemeView {
                 if (renderer.getGcodeResult() == null && j != -1) {
                     longClickTargetObject = j;
                     postDelayed(longClick, 300);
+                } else if (renderer.getGcodeResult() == null && renderer.getModel() != null) {
+                    postDelayed(bedLongClick, 300);
                 }
             }
 
@@ -340,6 +375,7 @@ public class GLView extends GLSurfaceView implements IThemeView {
         }
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_CANCEL) {
             removeCallbacks(longClick);
+            removeCallbacks(bedLongClick);
             if (longClickGesture) {
                 if (longClickMoved) {
                     queueEvent(()->{
@@ -445,6 +481,7 @@ public class GLView extends GLSurfaceView implements IThemeView {
                         onePointerGesture = true;
                         startingGesture = true;
                         removeCallbacks(longClick);
+                        removeCallbacks(bedLongClick);
                     }
                 }
 
