@@ -38,6 +38,8 @@ public class CloudController {
     public final static String USER_INFO_AI_GEN_TAG = "ai_gen_user_info";
     public final static String CLOUD_SYNC_TAG = "cloud_sync";
 
+    private final static boolean OFFLINE_BOOTSTRAP = true;
+
     private final static String TAG = "cloud";
     private final static long MIN_SYNC_DELTA = 5 * 60 * 1000L; // Once in 5 minutes
     private final static long MIN_SYNC_FEATURES_DELTA = 12 * 60 * 60 * 1000L; // Once in 12 hours
@@ -86,6 +88,14 @@ public class CloudController {
     private static Gson gson = new Gson();
 
     public static void initCached() {
+        if (OFFLINE_BOOTSTRAP) {
+            userInfo = null;
+            userFeatures = null;
+            modelsUsed = 0;
+            modelsMaxGenerations = 0;
+            isLoggingIn = false;
+            return;
+        }
         if (Prefs.getCloudCachedUserFeatures() != null) {
             userFeatures = gson.fromJson(Prefs.getCloudCachedUserFeatures(), CloudAPI.UserFeatures.class);
         }
@@ -99,6 +109,7 @@ public class CloudController {
     }
 
     public static void init() {
+        if (OFFLINE_BOOTSTRAP) return;
         long now = SliceBeam.TRUE_TIME.now().getTime();
         boolean needSyncInfo = userFeatures == null || now - Prefs.getCloudLastFeaturesSync() > MIN_SYNC_FEATURES_DELTA;
         if (needSyncInfo) {
@@ -184,6 +195,11 @@ public class CloudController {
     }
 
     public static void beginLogin() {
+        if (OFFLINE_BOOTSTRAP) {
+            isLoggingIn = false;
+            SliceBeam.EVENT_BUS.fireEvent(new CloudLoginStateUpdatedEvent());
+            return;
+        }
         isLoggingIn = true;
         SliceBeam.EVENT_BUS.fireEvent(new CloudLoginStateUpdatedEvent());
         beginLogin0();
@@ -192,6 +208,7 @@ public class CloudController {
     public static void cancelLogin() {
         isLoggingIn = false;
         SliceBeam.EVENT_BUS.fireEvent(new CloudLoginStateUpdatedEvent());
+        if (OFFLINE_BOOTSTRAP) return;
         if (loginSessionId != null) {
             CloudAPI.INSTANCE.loginCancel(loginSessionId, response -> {});
         }
@@ -209,10 +226,12 @@ public class CloudController {
         userInfo = null;
         SliceBeam.EVENT_BUS.fireEvent(new CloudLoginStateUpdatedEvent());
         SliceBeam.EVENT_BUS.fireEvent(new CloudUserInfoUpdatedEvent());
+        if (OFFLINE_BOOTSTRAP) return;
         CloudAPI.INSTANCE.logout(response -> {});
     }
 
     public static void checkGeneratorRemaining() {
+        if (OFFLINE_BOOTSTRAP) return;
         CloudAPI.INSTANCE.modelsGetRemainingCount(new APICallback<CloudAPI.ModelsRemainingCount>() {
             @Override
             public void onResponse(CloudAPI.ModelsRemainingCount response) {
@@ -231,6 +250,11 @@ public class CloudController {
     }
 
     public static void checkUserFeatures() {
+        if (OFFLINE_BOOTSTRAP) {
+            userFeatures = null;
+            SliceBeam.EVENT_BUS.fireEvent(new CloudFeaturesUpdatedEvent());
+            return;
+        }
         CloudAPI.INSTANCE.userGetFeatures(new APICallback<CloudAPI.UserFeatures>() {
             @Override
             public void onResponse(CloudAPI.UserFeatures response) {
@@ -259,14 +283,17 @@ public class CloudController {
     }
 
     public static boolean hasAccountFeatures() {
+        if (OFFLINE_BOOTSTRAP) return false;
         return userFeatures != null && userFeatures.levels != null && !userFeatures.levels.isEmpty();
     }
 
     public static boolean isSyncAvailable() {
+        if (OFFLINE_BOOTSTRAP) return false;
         return Prefs.getCloudAPIToken() != null && userInfo != null && userFeatures != null && userInfo.currentLevel >= userFeatures.syncRequiredLevel;
     }
 
     public static boolean needShowAIGenerator() {
+        if (OFFLINE_BOOTSTRAP) return false;
         return userFeatures != null && userFeatures.aiGeneratorRequiredLevel >= 0;
     }
 

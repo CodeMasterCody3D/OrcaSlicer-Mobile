@@ -235,7 +235,7 @@ public class FileMenu extends ListBedMenu {
                                                     Activity act = (Activity) fragment.getContext();
                                                     Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
                                                     i.setType("application/ini");
-                                                    i.putExtra(Intent.EXTRA_TITLE, "SliceBeam_config_bundle.ini");
+                                                    i.putExtra(Intent.EXTRA_TITLE, "OrcaSlicerMobile_config_bundle.ini");
                                                     act.startActivityForResult(i, MainActivity.REQUEST_CODE_EXPORT_PROFILES);
                                                 }
                                             })
@@ -251,7 +251,7 @@ public class FileMenu extends ListBedMenu {
                         Activity act = (Activity) fragment.getContext();
                         Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
                         i.setType("application/3mf");
-                        i.putExtra(Intent.EXTRA_TITLE, "SliceBeam_project.3mf");
+                        i.putExtra(Intent.EXTRA_TITLE, "OrcaSlicerMobile_project.3mf");
                         act.startActivityForResult(i, MainActivity.REQUEST_CODE_EXPORT_3MF);
                     }
                 })

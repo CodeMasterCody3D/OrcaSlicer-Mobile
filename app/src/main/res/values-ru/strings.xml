@@ -145,7 +145,7 @@
     <string name="IntroConfigured">Похоже всё настроено.\nПросто нажмите завершить!</string>
     <string name="IntroFinish">Завершить</string>
     <string name="IntroEarlyAccess">Ранний доступ</string>
-    <string name="IntroEarlyAccessMessage">Вы используете ранний доступ Slice Beam.\nПожалуйста обратите внимание, что некоторые функции могут быть недоступны, содержать ошибки или работать не так, как ожидается.\nДля получения новостей о приложении подпишитесь на Telegram-канал разработчика.</string>
+    <string name="IntroEarlyAccessMessage">Вы используете раннюю bootstrap-сборку OrcaSlicer Mobile.\nНекоторые функции могут быть недоступны, содержать ошибки или всё ещё быть унаследованы от Slice Beam до завершения Android-порта.</string>
     <string name="SettingsResetToDefault">Сбросить настройки по-умолчанию</string>
     <string name="SettingsResetToDefaultTitle">Вы уверены?</string>
     <string name="SettingsResetToDefaultDescription">Это действие не может быть отменено.</string>
@@ -177,12 +177,12 @@
     <string name="SettingsCloudManageTitle">Аккаунт Beam 3D</string>
     <string name="SettingsCloudManageDescription">Даёт следующие преимущества:</string>
     <string name="SettingsCloudManageFeatureEarlyAccess">Ранний доступ</string>
-    <string name="SettingsCloudManageFeatureEarlyAccessDescription">Вы можете скачать ранние сборки из чата Telegram для подписчиков</string>
+    <string name="SettingsCloudManageFeatureEarlyAccessDescription">Отключено в bootstrap-сборках OrcaSlicer Mobile</string>
     <string name="SettingsCloudManageFeatureCloudSync">Облачная синхронизация профилей</string>
     <string name="SettingsCloudManageFeatureCloudSyncDescription">Храните свои профили в облаке Beam</string>
     <string name="SettingsCloudManageFeatureAIGenerator">ИИ генератор моделей</string>
     <string name="SettingsCloudManageFeatureAIGeneratorDescription">%1$d моделей по фото в месяц</string>
-    <string name="SettingsCloudManageFeatureFreeForAll">Slice Beam может оставаться бесплатным для всех</string>
+    <string name="SettingsCloudManageFeatureFreeForAll">OrcaSlicer Mobile остаётся локальным приложением</string>
     <string name="SettingsCloudManageFeatureFreeForAllDescription">Ваш ник будет написан в списке поддержавших.\nСпасибо за вашу поддержку!</string>
     <string name="SettingsCloudManageLevelRedirectMessage">При подписке на данный уровень вы соглашаетесь с условиями обслуживания.</string>
     <string name="SettingsCloudManageLevelRedirectAlreadySubscribed">Уже подписаны?</string>

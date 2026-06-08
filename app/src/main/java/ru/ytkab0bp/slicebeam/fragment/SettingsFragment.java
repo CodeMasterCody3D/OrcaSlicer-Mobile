@@ -143,18 +143,12 @@ public class SettingsFragment extends ProfileListFragment {
                     Activity act = (Activity) getContext();
                     act.startActivity(new Intent(act, SetupActivity.class).putExtra(SetupActivity.EXTRA_ABOUT, true));
                 }),
-                new OptionElement(R.drawable.telegram, getContext().getString(R.string.SettingsTelegram)).setColor(R.attr.telegramColor, false).setOnClick(() -> {
-                    Activity act = (Activity) getContext();
-                    act.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/ytkab0bp_channel")));
-                }),
+                null,
                 BeamServerData.isBoostyAvailable() ? new OptionElement(R.drawable.boosty, getContext().getString(R.string.SettingsBoosty)).setColor(R.attr.boostyColorTop, true).setOnClick(() -> {
                     Activity act = (Activity) getContext();
                     act.startActivity(new Intent(act, SetupActivity.class).putExtra(SetupActivity.EXTRA_BOOSTY_ONLY, true));
                 }) : null,
-                new OptionElement(R.drawable.k3d_logo_new_14, getContext().getString(R.string.SettingsK3D)).setColor(R.attr.k3dColor, true).setOnClick(() -> {
-                    Activity act = (Activity) getContext();
-                    act.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/K_3_D")));
-                }),
+                null,
                 new OptionElement(R.drawable.refresh_outline_28, getContext().getString(R.string.SettingsResetToDefault)).setColor(R.attr.textColorNegative, false).setOnClick(() -> {
                     Context ctx = getContext();
                     if (ctx instanceof Activity) {

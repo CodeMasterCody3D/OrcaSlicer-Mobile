@@ -14,10 +14,7 @@ public class BeamServerDataTask extends BootTask {
             try {
                 SliceBeam.SERVER_DATA = new BeamServerData(new JSONObject(Prefs.getBeamServerData()));
             } catch (JSONException e) {
-                throw new RuntimeException(e);
-            }
-            if (System.currentTimeMillis() - Prefs.getLastCheckedInfo() >= 86400000L) {
-                ViewUtils.postOnMainThread(BeamServerData::load);
+                SliceBeam.SERVER_DATA = new BeamServerData(new JSONObject());
             }
         });
         onWorker();

@@ -21,6 +21,7 @@ import ru.ytkab0bp.slicebeam.utils.Prefs;
 
 public class BeamServerData {
     private final static String TAG = "BeamServerData";
+    private final static boolean OFFLINE_BOOTSTRAP = true;
     private final static String DATA_URL = "https://beam3d.ru/slicebeam.php?act=get_data";
     private final static String RUSSIA_CHECK_URL = "https://beam3d.ru/check_russia.txt";
     private static AsyncHttpClient client = new AsyncHttpClient();
@@ -43,14 +44,21 @@ public class BeamServerData {
     }
 
     public static boolean isBoostyAvailable() {
+        if (OFFLINE_BOOTSTRAP) return false;
         return !BuildConfig.IS_GOOGLE_PLAY || Prefs.isRussianIP();
     }
 
     public static boolean isCloudAvailable() {
+        if (OFFLINE_BOOTSTRAP) return false;
         return isBoostyAvailable() && CloudController.hasAccountFeatures();
     }
 
     public static void load() {
+        if (OFFLINE_BOOTSTRAP) {
+            SliceBeam.SERVER_DATA = new BeamServerData(new JSONObject());
+            SliceBeam.EVENT_BUS.fireEvent(new BeamServerDataUpdatedEvent());
+            return;
+        }
         client.get(DATA_URL, new AsyncHttpResponseHandler() {
             @Override
             public void onSuccess(int statusCode, Header[] headers, byte[] responseBody) {
