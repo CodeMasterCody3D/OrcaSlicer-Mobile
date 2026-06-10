@@ -1017,6 +1017,32 @@ extern "C" {
                     config.set_key_value("filament_map", new ConfigOptionInts(filamentMap));
                 }
 
+                // Flush (purge) volumes are project-scoped options that preset INIs never carry,
+                // and the engine's default flush_volumes_matrix is sized for exactly 4 filaments.
+                // GCode::append_full_config requires matrix.size() == N^2 * flush_multiplier.size()
+                // and throws otherwise, so rebuild the flush vectors whenever the sizes disagree.
+                {
+                    size_t heads = 1;
+                    auto* fm = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_multiplier", false));
+                    if (fm != nullptr && !fm->values.empty()) heads = fm->values.size();
+                    else config.set_key_value("flush_multiplier", new ConfigOptionFloats(std::vector<double>(heads, 0.3)));
+
+                    size_t n = (size_t) numFilaments;
+                    auto* mx = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_volumes_matrix", false));
+                    if (mx == nullptr || mx->values.size() != n * n * heads) {
+                        // Engine default volumes: 280mm^3 between distinct filaments, 0 on the diagonal.
+                        std::vector<double> matrix(n * n * heads, 280.);
+                        for (size_t h = 0; h < heads; ++h)
+                            for (size_t i = 0; i < n; ++i)
+                                matrix[h * n * n + i * n + i] = 0.;
+                        config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(matrix));
+                    }
+
+                    auto* fv = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_volumes_vector", false));
+                    if (fv == nullptr || fv->values.size() != n * 2)
+                        config.set_key_value("flush_volumes_vector", new ConfigOptionFloats(std::vector<double>(n * 2, 140.)));
+                }
+
                 const ConfigOption* nd = config.option("nozzle_diameter");
                 if (nd && static_cast<const ConfigOptionFloats*>(nd)->values.size() <= 1) {
                     config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(true));
