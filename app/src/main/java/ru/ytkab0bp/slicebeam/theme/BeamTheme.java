@@ -63,27 +63,28 @@ public class BeamTheme {
         nameRes = R.string.SettingsInterfaceThemeDark;
         colors = LIGHT.colors.clone();
 
-        colors.put(R.attr.dividerColor, 0xff333333);
-        colors.put(R.attr.dividerContrastColor, 0xff444444);
-        colors.put(R.attr.dialogBackground, 0xff212121);
-        colors.put(R.attr.switchThumbUncheckedColor, 0xff212121);
+        // OrcaSlicer dark grey palette
+        colors.put(R.attr.dividerColor, 0xff3d3d3d);
+        colors.put(R.attr.dividerContrastColor, 0xff484848);
+        colors.put(R.attr.dialogBackground, 0xff2e2e2e);
+        colors.put(R.attr.switchThumbUncheckedColor, 0xff3a3a3a);
 
-        colors.put(R.attr.defaultBedColor, 0xff333333);
-        colors.put(R.attr.bedGridlinesColor, 0x99e5e5e5);
-        colors.put(R.attr.bedContourlinesColor, 0x40ffffff);
-        colors.put(R.attr.backgroundColorTop, 0xff292929);
-        colors.put(R.attr.backgroundColorBottom, 0xff181818);
+        colors.put(R.attr.defaultBedColor, 0xff3a3a3a);
+        colors.put(R.attr.bedGridlinesColor, 0x80d0d0d0);
+        colors.put(R.attr.bedContourlinesColor, 0x33ffffff);
+        colors.put(R.attr.backgroundColorTop, 0xff2b2b2b);
+        colors.put(R.attr.backgroundColorBottom, 0xff1a1a1a);
         colors.put(R.attr.boostyColorBottom, 0xff884725);
 
         colors.put(R.attr.xTrackColor, 0xffee0000);
         colors.put(R.attr.yTrackColor, 0xff00ee00);
         colors.put(R.attr.zTrackColor, 0xff0000ee);
 
-        colors.put(R.attr.snackbarBase, 0xFF212121);
+        colors.put(R.attr.snackbarBase, 0xFF2d2d2d);
 
         colors.put(android.R.attr.textColorPrimary, 0xffffffff);
         colors.put(android.R.attr.textColorSecondary, 0x99ffffff);
-        colors.put(android.R.attr.windowBackground, 0xff121212);
+        colors.put(android.R.attr.windowBackground, 0xff252525);
         colors.put(android.R.attr.colorControlHighlight, 0x21ffffff);
     }};
 

@@ -22,6 +22,23 @@
     <string name="ModelContextFillBed">Fill bed with this model</string>
     <string name="ModelContextFillBedFinished">Added %1$d copies.</string>
     <string name="ModelContextFillBedNoRoom">No more copies fit on the bed.</string>
+    <string name="ModelContextDuplicate">Duplicate</string>
+    <string name="ModelContextDuplicated">Model duplicated.</string>
+    <string name="ModelContextDelete">Delete</string>
+    <string name="ModelContextDeleted">Model deleted.</string>
+    <string name="ModelContextCenterOnBed">Center on bed</string>
+    <string name="ModelContextCentered">Model centered.</string>
+    <string name="ModelContextAutoOrient">Auto-orient</string>
+    <string name="ModelContextAutoOriented">Model auto-oriented.</string>
+    <string name="ModelContextResetRotation">Reset rotation</string>
+    <string name="ModelContextResetRotationDone">Rotation reset.</string>
+    <string name="ModelContextResetScale">Reset scale</string>
+    <string name="ModelContextResetScaleDone">Scale reset.</string>
+    <string name="ModelContextSetOnFace">Lay on face</string>
+    <string name="ModelContextSelectAll">Select all</string>
+    <string name="ModelContextSelectedAll">All models selected.</string>
+    <string name="ModelContextDeleteAll">Delete all</string>
+    <string name="ModelContextDeletedAll">All models deleted.</string>
     <string name="MenuFileAIGenerator">Model\nfrom photo</string>
     <string name="MenuFileAIGeneratorPleaseWaitSetup">Please wait…</string>
     <string name="MenuFileAIGeneratorErrorNotLoadedUserAccount">Error: user info not fetched yet.</string>
@@ -40,8 +57,8 @@
     <string name="MenuFileCalibrationsLADescription">Linear/Pressure Advance Calibration</string>
     <string name="MenuFileCalibrationsRetract">K3D Retractions</string>
     <string name="MenuFileCalibrationsRetractDescription">Retraction distance and speed calibration</string>
-    <string name="MenuFileCalibrationsModels">Calibration models</string>
-    <string name="MenuFileCalibrationsModelsDescription">Calibration models library</string>
+    <string name="MenuFileCalibrationsModels">Handy Models</string>
+    <string name="MenuFileCalibrationsModelsDescription">Handy models library</string>
     <string name="MenuFileCalibrationsModels3DBenchy" translatable="false">3D Benchy</string>
     <string name="MenuFileCalibrationsModelsXYZCube">Calibration cube</string>
     <string name="MenuFileCalibrationsModelsBunny">Bunny</string>
@@ -108,6 +125,7 @@
     <string name="MenuTransformScaleZValue">Z = %1$.2f %% | %2$.2f mm</string>
     <string name="MenuTransformScaleMM">Input in mm</string>
     <string name="MenuTransformMirror">Mirror</string>
+    <string name="MenuTransformCut">Cut (Half)</string>
     <string name="MenuTransformMirrorX">Mirror X</string>
     <string name="MenuTransformMirrorY">Mirror Y</string>
     <string name="MenuTransformMirrorZ">Mirror Z</string>
@@ -123,6 +141,8 @@
     <string name="MenuSliceInfoLayers">Layers %1$d - %2$d</string>
     <string name="MenuSliceExportToFile">Export to file</string>
     <string name="MenuSliceShare">Share</string>
+    <string name="MenuSlicePerformance">Performance</string>
+    <string name="MenuSliceFilamentView">Filament view</string>
     <string name="MenuSliceSendToPrinter">Send to printer</string>
     <string name="MenuSliceSendToPrinterAndPrint">Send and print</string>
     <string name="MenuSliceSendToPrinterLoading">Uploading…</string>
@@ -173,6 +193,7 @@
     <string name="SettingsInterfaceResolutionScale">3D Resolution scale</string>
     <string name="SettingsInterfaceResolutionScaleDescription">May improve performance by lowering resolution</string>
     <string name="SettingsAbout">About app</string>
+    <string name="SettingsAddPrinter">Add printer from presets</string>
     <string name="SettingsAboutVersion">v%s\nOrcaSlicer Mobile bootstrap\nBased on Slice Beam, PrusaSlicer, Slic3r, and OrcaSlicer-compatible profiles\n\nMaintained by CodeMasterCody3D</string>
     <string name="SettingsProfileCopy">%s - Copy</string>
     <string name="SettingsCloneProfile">Clone current</string>

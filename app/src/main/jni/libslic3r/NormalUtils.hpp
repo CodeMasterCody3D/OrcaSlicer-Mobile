@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2022 Pavel Mikuš @Godrak
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_NormalUtils_hpp_
 #define slic3r_NormalUtils_hpp_
 
@@ -65,7 +61,7 @@ public:
     /// <param name="vertices">vertices data</param>
     /// <returns>Angle [in radian]</returns>
     static float indice_angle(int                            i,
-                              const Vec3crd &                indice,
+                              const Vec3i32 &                indice,
                               const std::vector<stl_vertex> &vertices);
 };
 

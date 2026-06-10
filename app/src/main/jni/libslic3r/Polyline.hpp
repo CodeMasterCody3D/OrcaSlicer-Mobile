@@ -1,13 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Tomáš Mészáros @tamasmeszaros, Pavel Mikuš @Godrak, Vojtěch Bubník @bubnikv, Lukáš Hejl @hejllukas, Lukáš Matěna @lukasmatena, Oleksandra Iushchenko @YuSanka, Enrico Turri @enricoturri1966
-///|/ Copyright (c) Slic3r 2013 - 2016 Alessandro Ranellucci @alranel
-///|/
-///|/ ported from lib/Slic3r/Polyline.pm:
-///|/ Copyright (c) Prusa Research 2018 Vojtěch Bubník @bubnikv
-///|/ Copyright (c) Slic3r 2011 - 2014 Alessandro Ranellucci @alranel
-///|/ Copyright (c) 2012 Mark Hindess
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_Polyline_hpp_
 #define slic3r_Polyline_hpp_
 
@@ -16,68 +6,111 @@
 #include "MultiPoint.hpp"
 #include <string>
 #include <vector>
+//BBS: new necessary header file
+#include "ArcFitter.hpp"
 
 namespace Slic3r {
 
 class Polyline;
-struct ThickPolyline;
+class ThickPolyline;
 typedef std::vector<Polyline> Polylines;
 typedef std::vector<ThickPolyline> ThickPolylines;
 
 class Polyline : public MultiPoint {
 public:
-    Polyline() = default;
-    Polyline(const Polyline &other) : MultiPoint(other.points) {}
-    Polyline(Polyline &&other) : MultiPoint(std::move(other.points)) {}
-    Polyline(std::initializer_list<Point> list) : MultiPoint(list) {}
-    explicit Polyline(const Point &p1, const Point &p2) { points.reserve(2); points.emplace_back(p1); points.emplace_back(p2); }
-    explicit Polyline(const Points &points) : MultiPoint(points) {}
-    explicit Polyline(Points &&points) : MultiPoint(std::move(points)) {}
-    Polyline& operator=(const Polyline &other) { points = other.points; return *this; }
-    Polyline& operator=(Polyline &&other) { points = std::move(other.points); return *this; }
+    Polyline() {};
+    Polyline(const Polyline& other) : MultiPoint(other.points), fitting_result(other.fitting_result) {}
+    Polyline(Polyline &&other) : MultiPoint(std::move(other.points)), fitting_result(std::move(other.fitting_result))  {}
+    Polyline(std::initializer_list<Point> list) : MultiPoint(list) { 
+        fitting_result.clear();
+    }
+    explicit Polyline(const Point &p1, const Point &p2) {
+        points.reserve(2);
+        points.emplace_back(p1);
+        points.emplace_back(p2);
+        fitting_result.clear();
+    }
+    explicit Polyline(const Points &points) : MultiPoint(points) {
+        fitting_result.clear();
+    }
+    explicit Polyline(Points &&points) : MultiPoint(std::move(points)) {
+        fitting_result.clear();
+    }
+    Polyline& operator=(const Polyline& other) {
+        points = other.points;
+        fitting_result = other.fitting_result;
+        return *this;
+    }
+    Polyline& operator=(Polyline&& other) {
+        points = std::move(other.points);
+        fitting_result = std::move(other.fitting_result);
+        return *this;
+    }
 	static Polyline new_scale(const std::vector<Vec2d> &points) {
 		Polyline pl;
 		pl.points.reserve(points.size());
 		for (const Vec2d &pt : points)
 			pl.points.emplace_back(Point::new_scale(pt(0), pt(1)));
+        //BBS: new_scale doesn't support arc, so clean
+        pl.fitting_result.clear();
 		return pl;
     }
     
-    void append(const Point &point) { this->points.push_back(point); }
-    void append(const Points &src) { this->append(src.begin(), src.end()); }
-    void append(const Points::const_iterator &begin, const Points::const_iterator &end) { this->points.insert(this->points.end(), begin, end); }
-    void append(Points &&src)
-    {
-        if (this->points.empty()) {
-            this->points = std::move(src);
-        } else {
-            this->points.insert(this->points.end(), src.begin(), src.end());
-            src.clear();
-        }
-    }
-    void append(const Polyline &src) 
-    { 
-        points.insert(points.end(), src.points.begin(), src.points.end());
+    void append(const Point &point) {
+        //BBS: don't need to append same point
+        if (!this->empty() && this->last_point() == point)
+            return;
+        MultiPoint::append(point);
+        append_fitting_result_after_append_points();
     }
 
-    void append(Polyline &&src) 
-    {
-        if (this->points.empty()) {
-            this->points = std::move(src.points);
+    void append_before(const Point& point) {
+        //BBS: don't need to append same point
+        if (!this->empty() && this->first_point() == point)
+            return;
+        if (this->size() == 1) {
+            this->fitting_result.clear();
+            MultiPoint::append(point);
+            MultiPoint::reverse();
         } else {
-            this->points.insert(this->points.end(), src.points.begin(), src.points.end());
-            src.points.clear();
+            this->reverse();
+            this->append(point);
+            this->reverse();
         }
     }
+
+    void append(const Points &src) {
+        //BBS: don't need to append same point
+        if (!this->empty() && !src.empty() && this->last_point() == src[0])
+            this->append(src.begin() + 1, src.end());
+        else
+            this->append(src.begin(), src.end());
+    }
+    void append(const Points::const_iterator &begin, const Points::const_iterator &end) {
+        //BBS: don't need to append same point
+        if (!this->empty() && begin != end && this->last_point() == *begin)
+            MultiPoint::append(begin + 1, end);
+        else
+            MultiPoint::append(begin, end);
+        append_fitting_result_after_append_points();
+    }
+    void append(Points &&src)
+    {
+        MultiPoint::append(std::move(src));
+        append_fitting_result_after_append_points();
+    }
+    void append(const Polyline& src);
+    void append(Polyline&& src);
   
     Point& operator[](Points::size_type idx) { return this->points[idx]; }
     const Point& operator[](Points::size_type idx) const { return this->points[idx]; }
-
-    double length() const;
-    const Point& last_point() const { return this->points.back(); }
+  
+    const Point& last_point() const override { return this->points.back(); }
     const Point& leftmost_point() const;
-    Lines lines() const;
+    Lines lines() const override;
 
+    void clear() { MultiPoint::clear(); this->fitting_result.clear(); }
+    void reverse();
     void clip_end(double distance);
     void clip_start(double distance);
     void extend_end(double distance);
@@ -85,16 +118,39 @@ public:
     Points equally_spaced_points(double distance) const;
     void simplify(double tolerance);
 //    template <class T> void simplify_by_visibility(const T &area);
-    void split_at(const Point &point, Polyline* p1, Polyline* p2) const;
+    void split_at(Point &point, Polyline* p1, Polyline* p2) const;
+    bool split_at_index(const size_t index, Polyline* p1, Polyline* p2) const;
+    bool split_at_length(const double length, Polyline* p1, Polyline* p2) const;
+
     bool is_straight() const;
     bool is_closed() const { return this->points.front() == this->points.back(); }
 
-    using iterator = Points::iterator;
-    using const_iterator = Points::const_iterator;
+    //BBS: store arc fitting result
+    std::vector<PathFittingData> fitting_result;
+    //BBS: simplify points by arc fitting
+    void simplify_by_fitting_arc(double tolerance);
+    //BBS: 
+    Polylines equally_spaced_lines(double distance) const;
+
+private:
+    void append_fitting_result_after_append_points();
+    void append_fitting_result_after_append_polyline(const Polyline& src);
+    void reset_to_linear_move();
+    bool split_fitting_result_before_index(const size_t index, Point &new_endpoint, std::vector<PathFittingData>& data) const;
+    bool split_fitting_result_after_index(const size_t index, Point &new_startpoint, std::vector<PathFittingData>& data) const;
 };
 
 inline bool operator==(const Polyline &lhs, const Polyline &rhs) { return lhs.points == rhs.points; }
 inline bool operator!=(const Polyline &lhs, const Polyline &rhs) { return lhs.points != rhs.points; }
+
+// Don't use this class in production code, it is used exclusively by the Perl binding for unit tests!
+#ifdef PERL_UCHAR_MIN
+class PolylineCollection
+{
+public:
+    Polylines polylines;
+};
+#endif /* PERL_UCHAR_MIN */
 
 extern BoundingBox get_extents(const Polyline &polyline);
 extern BoundingBox get_extents(const Polylines &polylines);
@@ -150,7 +206,7 @@ inline Polylines to_polylines(std::vector<Points> &&paths)
 {
     Polylines out;
     out.reserve(paths.size());
-    for (Points &path : paths)
+    for (const Points &path : paths)
         out.emplace_back(std::move(path));
     return out;
 }
@@ -195,46 +251,36 @@ bool remove_degenerate(Polylines &polylines);
 
 // Returns index of a segment of a polyline and foot point of pt on polyline.
 std::pair<int, Point> foot_pt(const Points &polyline, const Point &pt);
+std::pair<int, Point3> foot_pt(const Points3 &polyline, const Point3 &pt);
 
-struct ThickPolyline {
-    ThickPolyline() = default;
+class ThickPolyline : public Polyline {
+public:
+    ThickPolyline() : endpoints(std::make_pair(false, false)) {}
     ThickLines thicklines() const;
-
-    const Point& first_point()  const { return this->points.front(); }
-    const Point& last_point()   const { return this->points.back(); }
-    size_t       size()         const { return this->points.size(); }
-    bool         is_valid()     const { return this->points.size() >= 2; }
-    bool         empty()        const { return this->points.empty(); }
-    double       length()       const { return Slic3r::length(this->points); }
-
-    void         clear() { this->points.clear(); this->width.clear(); }
-
     void reverse() {
-        std::reverse(this->points.begin(), this->points.end());
+        Polyline::reverse();
         std::reverse(this->width.begin(), this->width.end());
         std::swap(this->endpoints.first, this->endpoints.second);
     }
-
-    void clip_end(double distance);
+    void clear() {
+        Polyline::clear();
+        width.clear();
+    }
 
     // Make this closed ThickPolyline starting in the specified index.
     // Be aware that this method can be applicable just for closed ThickPolyline.
     // On open ThickPolyline make no effect.
     void start_at_index(int index);
 
-    Points                  points;
-    // vector of startpoint width and endpoint width of each line segment. The size should be always (points.size()-1) * 2
-    // e.g. let four be points a,b,c,d. that are three lines ab, bc, cd. for each line, there should be start width, so the width vector is:
-    // w(a), w(b), w(b), w(c), w(c), w(d)
-    std::vector<coordf_t>   width;
-    std::pair<bool,bool>    endpoints { false, false };
+    std::vector<coordf_t> width;
+    std::pair<bool,bool>  endpoints;
 };
 
-inline ThickPolylines to_thick_polylines(Polylines &&polylines, const coordf_t width)
+inline ThickPolylines to_thick_polylines(Polylines&& polylines, const coordf_t width)
 {
     ThickPolylines out;
     out.reserve(polylines.size());
-    for (Polyline &polyline : polylines) {
+    for (Polyline& polyline : polylines) {
         out.emplace_back();
         out.back().width.assign((polyline.points.size() - 1) * 2, width);
         out.back().points = std::move(polyline.points);
@@ -245,8 +291,63 @@ inline ThickPolylines to_thick_polylines(Polylines &&polylines, const coordf_t w
 class Polyline3 : public MultiPoint3
 {
 public:
-    double length() const;
-    Lines3 lines() const;
+    Polyline3() {}
+    explicit Polyline3(const Points3 &points) { this->points = points; }
+    explicit Polyline3(const Polyline &poly, coord_t z = 0) {
+        this->points.reserve(poly.points.size());
+        for (const Point &pt : poly.points) {
+            this->points.emplace_back(pt.x(), pt.y(), z);
+        }
+    }
+
+    virtual Lines3 lines() const;
+
+    // Convert to 2D Polyline by dropping Z coordinates
+    Polyline to_polyline() const;
+
+    // Clip the end of the polyline by a distance
+    void clip_end(double distance);
+
+    // Simplify polyline using Douglas-Peucker algorithm
+    void simplify(double tolerance);
+
+    // Simplify by arc fitting (for ZAA arc fitting support)
+    void simplify_by_fitting_arc(double tolerance);
+
+    // Reverse the polyline
+    void reverse();
+
+    // Split polyline at given index
+    bool split_at_index(const size_t index, Polyline3 *p1, Polyline3 *p2) const;
+
+    // Split polyline at a given point (2D)
+    void split_at(Point &point, Polyline3* p1, Polyline3* p2) const;
+
+    // Split polyline at a given point (3D)
+    void split_at(Point3 &point, Polyline3* p1, Polyline3* p2) const;
+
+    // Split polyline at a given length
+    bool split_at_length(const double length, Polyline3 *p1, Polyline3 *p2) const;
+
+    // Append a single point
+    void append(const Point3& point);
+
+    // Append another Polyline3
+    void append(const Polyline3& src);
+
+    // Append before (prepend)
+    void append_before(const Point3& point);
+
+    // Arc fitting support - fitting_result stores arc path data
+    // This is populated by simplify_by_fitting_arc()
+    // Uses the global PathFittingData from ArcFitter.hpp
+    std::vector<PathFittingData> fitting_result;
+
+private:
+    void append_fitting_result_after_append_points();
+    void append_fitting_result_after_append_polyline(const Polyline3& src);
+    bool split_fitting_result_before_index(size_t index, Point3& new_endpoint, std::vector<PathFittingData>& result) const;
+    bool split_fitting_result_after_index(size_t index, Point3& new_startpoint, std::vector<PathFittingData>& result) const;
 };
 
 typedef std::vector<Polyline3> Polylines3;

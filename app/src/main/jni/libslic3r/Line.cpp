@@ -1,13 +1,3 @@
-///|/ Copyright (c) Prusa Research 2018 - 2022 Pavel Mikuš @Godrak, Lukáš Hejl @hejllukas, Filip Sykala @Jony01, Enrico Turri @enricoturri1966, Vojtěch Bubník @bubnikv, Tomáš Mészáros @tamasmeszaros, Lukáš Matěna @lukasmatena
-///|/ Copyright (c) Slic3r 2013 - 2016 Alessandro Ranellucci @alranel
-///|/ Copyright (c) 2014 Petr Ledvina @ledvinap
-///|/
-///|/ ported from lib/Slic3r/Line.pm:
-///|/ Copyright (c) Prusa Research 2022 Vojtěch Bubník @bubnikv
-///|/ Copyright (c) Slic3r 2011 - 2014 Alessandro Ranellucci @alranel
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "Geometry.hpp"
 #include "Line.hpp"
 #include "Polyline.hpp"
@@ -86,7 +76,20 @@ bool Line::parallel_to(const Line& line) const
     const Vec2d v2 = (line.b - line.a).cast<double>();
     return sqr(cross2(v1, v2)) < sqr(EPSILON) * v1.squaredNorm() * v2.squaredNorm();
 }
-
+bool Line::overlap(const Line &line, double &overlap_length) const
+{
+    if (!this->parallel_to(line)) return false;
+    Line line_(this->a, line.a);
+    if (line_.length() > scaled(EPSILON) && !this->parallel_to(line_)) return false;
+    coord_t a_min  = std::min(this->a.x(), this->b.x());
+    coord_t a_max  = std::max(this->a.x(), this->b.x());
+    coord_t b_min  = std::min(line.a.x(), line.b.x());
+    coord_t b_max  = std::max(line.a.x(), line.b.x());
+    if (a_min>b_max||a_max<b_min) return false;
+    overlap_length = std::max((coord_t)0, std::min(a_max, b_max) - std::max(a_min, b_min));
+    overlap_length /= ((double) a_max - a_min) / this->length();
+    return true;
+}
 bool Line::perpendicular_to(double angle) const
 {
     return Slic3r::Geometry::directions_perpendicular(this->direction(), angle);
@@ -124,7 +127,7 @@ void Line::extend(double offset)
 
 Vec3d Linef3::intersect_plane(double z) const
 {
-    auto   v = (this->b - this->a).cast<double>();
+    Vec3d  v = (this->b - this->a).cast<double>();
     double t = (z - this->a(2)) / v(2);
     return Vec3d(this->a(0) + v(0) * t, this->a(1) + v(1) * t, z);
 }

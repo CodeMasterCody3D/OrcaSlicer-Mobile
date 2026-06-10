@@ -62,6 +62,7 @@ import ru.ytkab0bp.slicebeam.slic3r.GCodeViewer;
 import ru.ytkab0bp.slicebeam.slic3r.Slic3rLocalization;
 import ru.ytkab0bp.slicebeam.theme.IThemeView;
 import ru.ytkab0bp.slicebeam.theme.ThemesRepo;
+import ru.ytkab0bp.slicebeam.utils.Prefs;
 import ru.ytkab0bp.slicebeam.utils.ViewUtils;
 import ru.ytkab0bp.slicebeam.view.DividerView;
 import ru.ytkab0bp.slicebeam.view.PositionScrollView;
@@ -111,7 +112,34 @@ public class SliceMenu extends ListBedMenu {
                         }
                         act.startActivity(Intent.createChooser(i, null));
                     }
-                })
+                }),
+                new BedMenuItem(R.string.MenuSlicePerformance, R.drawable.sparkle_28)
+                        .setTitleTextSize(8f)
+                        .setCheckable((buttonView, isChecked) -> {
+                            Prefs.setPerformanceModeEnabled(isChecked);
+                            GCodeViewer viewer = fragment.getGlView().getRenderer().getViewer();
+                            if (viewer != null) {
+                                viewer.setInfillVisibilityDepth(isChecked ? 5 : -1);
+                                fragment.getGlView().requestRender();
+                            }
+                        }, Prefs.isPerformanceModeEnabled()),
+                new BedMenuItem(R.string.MenuSliceFilamentView, R.drawable.slot_filament_28)
+                        .setTitleTextSize(8f)
+                        .setCheckable((buttonView, isChecked) -> fragment.getGlView().queueEvent(() -> {
+                            GCodeViewer viewer = fragment.getGlView().getRenderer().getViewer();
+                            if (viewer != null) {
+                                if (isChecked) {
+                                    int[] pal = Prefs.getFilamentPalette();
+                                    int[] rgb = new int[pal.length];
+                                    for (int i = 0; i < pal.length; i++) rgb[i] = pal[i] & 0xFFFFFF;
+                                    viewer.setToolColors(rgb);
+                                    viewer.setViewType(GCodeViewer.VIEW_TYPE_TOOL);
+                                } else {
+                                    viewer.setViewType(GCodeViewer.VIEW_TYPE_FEATURE);
+                                }
+                                fragment.getGlView().requestRender();
+                            }
+                        }), false)
         ));
         ConfigObject obj = SliceBeam.CONFIG.findPrinter(SliceBeam.CONFIG.presets.get("printer"));
         assertTrue(obj != null);
@@ -518,6 +546,13 @@ public class SliceMenu extends ListBedMenu {
             if (viewer == null) {
                 return;
             }
+            // Set infill visibility depth to optimize performance
+            // Only show infill for 5 layers below the top layer
+            if (Prefs.isPerformanceModeEnabled()) {
+                viewer.setInfillVisibilityDepth(5);
+            } else {
+                viewer.setInfillVisibilityDepth(-1);
+            }
             viewer.setLayersViewRange(from - 1, to - 1);
             fragment.getGlView().requestRender();
 
@@ -542,8 +577,10 @@ public class SliceMenu extends ListBedMenu {
 
             fromTrack = new PositionScrollView(ctx);
             fromTrack.setProgressListener(integer -> {
-                if (getViewer() == null) return;
-                toTrack.setMinMax(integer, (int) getViewer().getLayersCount());
+                GCodeViewer viewer = getViewer();
+                if (viewer == null) return;
+                if (Prefs.isPerformanceModeEnabled()) viewer.setFastMode(true);
+                toTrack.setMinMax(integer, (int) viewer.getLayersCount());
                 if (toTrack.getCurrentPosition() < integer) {
                     toTrack.setCurrentPosition(integer);
                 }
@@ -552,17 +589,27 @@ public class SliceMenu extends ListBedMenu {
                 ViewUtils.removeCallbacks(applyCallback);
                 ViewUtils.postOnMainThread(applyCallback = ()-> applyView(integer, toTrack.getCurrentPosition()), 50);
             });
-            fromTrack.setListener(integer -> applyView(integer, toTrack.getCurrentPosition()));
+            fromTrack.setListener(integer -> {
+                GCodeViewer viewer = getViewer();
+                if (viewer != null) viewer.setFastMode(false);
+                applyView(integer, toTrack.getCurrentPosition());
+            });
             ll.addView(fromTrack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(80)));
 
             toTrack = new PositionScrollView(ctx);
             toTrack.setProgressListener(integer -> {
+                GCodeViewer viewer = getViewer();
+                if (viewer != null && Prefs.isPerformanceModeEnabled()) viewer.setFastMode(true);
                 title.setText(fragment.getContext().getString(R.string.MenuSliceInfoLayers, fromTrack.getCurrentPosition(), integer));
 
                 ViewUtils.removeCallbacks(applyCallback);
                 ViewUtils.postOnMainThread(applyCallback = ()-> applyView(fromTrack.getCurrentPosition(), integer), 50);
             });
-            toTrack.setListener(integer -> applyView(fromTrack.getCurrentPosition(), integer));
+            toTrack.setListener(integer -> {
+                GCodeViewer viewer = getViewer();
+                if (viewer != null) viewer.setFastMode(false);
+                applyView(fromTrack.getCurrentPosition(), integer);
+            });
             ll.addView(toTrack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(80)));
 
             ll.addView(new DividerView(ctx), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(1f)));

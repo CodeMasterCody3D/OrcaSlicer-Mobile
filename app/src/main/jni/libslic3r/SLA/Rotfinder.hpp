@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2020 - 2021 Tomáš Mészáros @tamasmeszaros
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef SLA_ROTFINDER_HPP
 #define SLA_ROTFINDER_HPP
 

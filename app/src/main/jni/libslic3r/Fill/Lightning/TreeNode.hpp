@@ -18,7 +18,7 @@
 namespace Slic3r::FillLightning
 {
 
-constexpr auto locator_cell_size = scaled<coord_t>(4.);
+inline coord_t locator_cell_size() { return scaled<coord_t>(4.); }
 
 class Node;
 
@@ -246,6 +246,8 @@ public:
      * This needs to be known when roots are reconnected, so that the last (higher) layer is supported by the next one.
      */
     const std::optional<Point>& getLastGroundingLocation() const { return m_last_grounding_location; }
+
+    void draw_tree(SVG& svg) { for (auto& child : m_children) { svg.draw(Line(m_p, child->getLocation()), "yellow"); child->draw_tree(svg); } }
 
 protected:
     /*!

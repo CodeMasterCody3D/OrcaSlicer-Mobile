@@ -76,6 +76,20 @@ public class IOUtils {
         }
     }
 
+    private static String mapOrcaConfigKey(String key) {
+        switch (key) {
+            // Cases ConfigObject.KEY_MIGRATION can't express:
+            // Orca's bundled JSONs use the plural form; the engine key (and the whitelist entry) is singular.
+            case "chamber_temperatures": return "chamber_temperature";
+            // first_layer_speed_over_raft has no Orca equivalent, so KEY_MIGRATION has no entry for it;
+            // keep the historical alias so the value is at least preserved in the profile.
+            case "initial_layer_infill_speed": return "first_layer_speed_over_raft";
+        }
+        // KEY_MIGRATION (legacy <-> Orca engine names) is the single source of truth for renames;
+        // a key the whitelist knows under its legacy name is resolved here, all others pass through.
+        return ConfigObject.legacyKey(key);
+    }
+
     private static ConfigObject downloadProfilesRecursively(String vendor, String type, String profile, List<String> supportedKeys) throws IOException, JSONException, MissingProfileException {
         ConfigObject cfg = new ConfigObject();
 
@@ -123,9 +137,6 @@ public class IOUtils {
                 throw new MissingProfileException(inherit);
             } else {
                 String vendor;
-                if (inherit.indexOf(' ') == -1) {
-                    throw new MissingProfileException(inherit);
-                }
                 if (inherit.contains("@BBL")) {
                     vendor = "BBL";
                 } else if (type.equals("process")) {
@@ -139,105 +150,48 @@ public class IOUtils {
 
                 if (vendor.equals("Generic") || inherit.startsWith("Bambu Lab")) vendor = "BBL";
 
-                ConfigObject _obj = downloadProfilesRecursively(vendor, type, inherit, supportedKeys);
-                for (Map.Entry<String, String> en : _obj.values.entrySet()) {
-                    String key = en.getKey();
-                    switch (key) {
-                        case "machine_start_gcode":
-                            key = "start_gcode";
-                            break;
-                        case "machine_end_gcode":
-                            key = "end_gcode";
-                            break;
-                        case "printable_area":
-                            key = "bed_shape";
-                            break;
-                        case "printable_height":
-                            key = "max_print_height";
-                            break;
-                        case "layer_change_gcode":
-                            key = "layer_gcode";
-                            break;
-                        case "before_layer_change_gcode":
-                            key = "before_layer_gcode";
-                            break;
-                        case "filament_start_gcode":
-                            key = "start_filament_gcode";
-                            break;
-                        case "filament_end_gcode":
-                            key = "end_filament_gcode";
-                            break;
-                        case "retraction_minimum_level":
-                            key = "retract_before_travel";
-                            break;
-                        case "retraction_length":
-                            key = "retract_length";
-                            break;
-                        case "retraction_speed":
-                            key = "retract_speed";
-                            break;
-                        case "deretraction_speed":
-                            key = "deretract_speed";
-                            break;
-                        case "change_filament_gcode":
-                            key = "pause_print_gcode";
-                            break;
-                        case "nozzle_temperature":
-                            key = "temperature";
-                            break;
-                        case "nozzle_temperature_initial_layer":
-                            key = "first_layer_temperature";
-                            break;
-                        case "filament_flow_ratio":
-                            key = "extrusion_multiplier";
-                            break;
-                        case "chamber_temperatures":
-                            key = "chamber_temperature";
-                            break;
-                        case "fan_max_speed":
-                            key = "max_fan_speed";
-                            break;
-                        case "fan_min_speed":
-                            key = "min_fan_speed";
-                            break;
-                        case "overhang_fan_speed":
-                            key = "bridge_fan_speed";
-                            break;
-                        case "slow_down_layer_time":
-                            key = "slowdown_below_layer_time";
-                            break;
-                        case "slow_down_min_speed":
-                            key = "min_print_speed";
-                            break;
+                ConfigObject inherited = null;
+                try {
+                    inherited = downloadProfilesRecursively(vendor, type, inherit, supportedKeys);
+                } catch (MissingProfileException e) {
+                    if (!inherit.endsWith("@System")) {
+                        throw e;
                     }
+                }
 
-                    if (key.equals("pressure_advance")) {
-                        StringBuilder sb = new StringBuilder("SET_PRESSURE_ADVANCE ADVANCE=").append(en.getValue());
-                        if (cfg.values.containsKey("start_filament_gcode")) {
-                            sb.append("\n").append(cfg.get("start_filament_gcode"));
-                        }
-                        cfg.values.put("start_filament_gcode", sb.toString());
-                    }
+                if (inherited != null) {
+                    for (Map.Entry<String, String> en : inherited.values.entrySet()) {
+                        String key = mapOrcaConfigKey(en.getKey());
 
-                    if (supportedKeys.contains(key)) {
-                        if (key.equals("ironing_type") && en.getValue().equals("no ironing")) {
-                            cfg.values.put("ironing", "0");
-                            cfg.values.put("ironing_type", "top");
-                        }
-                        if (key.equals("start_filament_gcode") || key.equals("end_filament_gcode") ||
-                            key.equals("start_gcode") || key.equals("end_gcode")) {
-
-                            String val = en.getValue();
-                            if (key.equals("start_filament_gcode")) {
-                                if (cfg.values.containsKey("start_filament_gcode")) {
-                                    val = cfg.get("start_filament_gcode") + "\n" + val;
-                                }
+                        if (key.equals("pressure_advance")) {
+                            StringBuilder sb = new StringBuilder("SET_PRESSURE_ADVANCE ADVANCE=").append(en.getValue());
+                            if (cfg.values.containsKey("start_filament_gcode")) {
+                                sb.append("\n").append(cfg.get("start_filament_gcode"));
                             }
+                            cfg.values.put("start_filament_gcode", sb.toString());
+                        }
 
-                            cfg.values.put(key, val.replaceAll("(\\{|\\[)nozzle_temperature_initial_layer(\\[\\d+]|)(}|])", "$1first_layer_temperature$2$3")
-                                    .replaceAll("(\\{|\\[)bed_temperature_initial_layer_single(\\[\\d+]|)(}|])", "$1first_layer_bed_temperature$2$3"));
-                        } else if (!key.equals("thumbnails")) {
-                            cfg.values.put(key, en.getValue());
+                        if (supportedKeys.contains(key)) {
+                            if (key.equals("ironing_type") && en.getValue().equals("no ironing")) {
+                                cfg.values.put("ironing", "0");
+                                cfg.values.put("ironing_type", "top");
+                            }
+                            if (key.equals("start_filament_gcode") || key.equals("end_filament_gcode") ||
+                                key.equals("start_gcode") || key.equals("end_gcode")) {
+
+                                String val = en.getValue();
+                                if (key.equals("start_filament_gcode")) {
+                                    if (cfg.values.containsKey("start_filament_gcode")) {
+                                        val = cfg.get("start_filament_gcode") + "\n" + val;
+                                    }
+                                }
+
+                                val = val.replace("nozzle_temperature_initial_layer", "first_layer_temperature")
+                                        .replace("bed_temperature_initial_layer_single", "first_layer_bed_temperature");
+                                cfg.values.put(key, val);
+                            } else if (!key.equals("thumbnails")) {
+                                cfg.values.put(key, en.getValue());
+                            }
                         }
                     }
                 }
@@ -249,10 +203,19 @@ public class IOUtils {
 
             if (key.equals("print_settings_id") || key.equals("filament_settings_id") || key.equals("printer_settings_id")) {
                 String v = obj.getString(key);
-                if (v.startsWith("[\"") && v.endsWith("\"]")) v = v.substring(2, v.length() - 2);
+                if (v.length() > 3 && v.charAt(0) == '[' && v.charAt(1) == '"' && v.charAt(v.length() - 2) == '"' && v.charAt(v.length() - 1) == ']') v = v.substring(2, v.length() - 2);
                 cfg.setTitle(v);
-            } else if (!key.equals("inherits") && supportedKeys.contains(key)) {
-                cfg.put(key, configJsonToString(obj.get(key)));
+            } else if (!key.equals("inherits")) {
+                String mappedKey = mapOrcaConfigKey(key);
+                if (supportedKeys.contains(mappedKey)) {
+                    String val = configJsonToString(obj.get(key));
+                    if (mappedKey.equals("start_filament_gcode") || mappedKey.equals("end_filament_gcode") ||
+                            mappedKey.equals("start_gcode") || mappedKey.equals("end_gcode")) {
+                        val = val.replace("nozzle_temperature_initial_layer", "first_layer_temperature")
+                                .replace("bed_temperature_initial_layer_single", "first_layer_bed_temperature");
+                    }
+                    cfg.put(mappedKey, val);
+                }
             }
         }
         return cfg;

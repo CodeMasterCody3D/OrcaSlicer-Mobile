@@ -1012,7 +1012,7 @@ IntRect ClipperBase::GetBounds()
   result.bottom = lm->LeftBound->Bot.y();
   while (lm != m_MinimaList.end())
   {
-    result.bottom = std::max(result.bottom, lm->LeftBound->Bot.y());
+    result.bottom = std::max(result.bottom, static_cast<decltype(result.bottom)>(lm->LeftBound->Bot.y()));
     TEdge* e = lm->LeftBound;
     for (;;) {
       TEdge* bottomE = e;
@@ -1022,11 +1022,11 @@ IntRect ClipperBase::GetBounds()
         if (e->Bot.x() > result.right) result.right = e->Bot.x();
         e = e->NextInLML;
       }
-      result.left = std::min(result.left, e->Bot.x());
-      result.right = std::max(result.right, e->Bot.x());
-      result.left = std::min(result.left, e->Top.x());
-      result.right = std::max(result.right, e->Top.x());
-      result.top = std::min(result.top, e->Top.y());
+      result.left = std::min(result.left, static_cast<decltype(result.left)>(e->Bot.x()));
+      result.right = std::max(result.right, static_cast<decltype(result.right)>(e->Bot.x()));
+      result.left = std::min(result.left, static_cast<decltype(result.left)>(e->Top.x()));
+      result.right = std::max(result.right, static_cast<decltype(result.right)>(e->Top.x()));
+      result.top = std::min(result.top, static_cast<decltype(result.top)>(e->Top.y()));
       if (bottomE == lm->LeftBound) e = lm->RightBound;
       else break;
     }

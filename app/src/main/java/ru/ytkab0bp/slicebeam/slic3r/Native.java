@@ -1,8 +1,21 @@
 package ru.ytkab0bp.slicebeam.slic3r;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONException;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import ru.ytkab0bp.slicebeam.SliceBeam;
 
-class Native {
+public class Native {
     static {
         System.loadLibrary("c++_shared");
         System.loadLibrary("gmp");
@@ -18,6 +31,125 @@ class Native {
     static native void get_print_config_def(PrintConfigDef def);
 
     static native void set_svg_path_prefix(String prefix);
+    public static String orca_bundle_read(String archivePath, String extractDir) throws IOException, JSONException {
+        File extractRoot = new File(extractDir);
+        if (!extractRoot.exists() && !extractRoot.mkdirs()) {
+            throw new IOException("Failed to create extraction directory: " + extractRoot);
+        }
+
+        try {
+            unzipArchive(new File(archivePath), extractRoot);
+
+            JSONArray files = new JSONArray();
+            String bundleStructureJson = collectJsonFiles(extractRoot, extractRoot, files);
+            if (bundleStructureJson == null) {
+                throw new IOException("bundle_structure.json not found in Orca bundle");
+            }
+
+            JSONObject result = new JSONObject();
+            result.put("bundle_structure_json", bundleStructureJson);
+            result.put("files", files);
+            return result.toString();
+        } finally {
+            deleteRecursively(extractRoot);
+        }
+    }
+
+    private static void unzipArchive(File archive, File extractRoot) throws IOException {
+        String rootPath = extractRoot.getCanonicalPath() + File.separator;
+        byte[] buffer = new byte[8192];
+
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(archive))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                File outFile = new File(extractRoot, entry.getName());
+                String outPath = outFile.getCanonicalPath();
+                if (!outPath.equals(extractRoot.getCanonicalPath()) && !outPath.startsWith(rootPath)) {
+                    throw new IOException("Zip entry escapes extraction directory: " + entry.getName());
+                }
+
+                if (entry.isDirectory()) {
+                    if (!outFile.exists() && !outFile.mkdirs()) {
+                        throw new IOException("Failed to create directory: " + outFile);
+                    }
+                    continue;
+                }
+
+                File parent = outFile.getParentFile();
+                if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                    throw new IOException("Failed to create directory: " + parent);
+                }
+
+                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                    int read;
+                    while ((read = zis.read(buffer)) != -1) {
+                        fos.write(buffer, 0, read);
+                    }
+                }
+            }
+        }
+    }
+
+    private static String collectJsonFiles(File root, File current, JSONArray files) throws IOException, JSONException {
+        String bundleStructureJson = null;
+        File[] children = current.listFiles();
+        if (children == null) {
+            return null;
+        }
+
+        for (File child : children) {
+            if (child.isDirectory()) {
+                String nested = collectJsonFiles(root, child, files);
+                if (bundleStructureJson == null && nested != null) {
+                    bundleStructureJson = nested;
+                }
+                continue;
+            }
+
+            if (!child.getName().endsWith(".json")) {
+                continue;
+            }
+
+            String content = readTextFile(child);
+            if ("bundle_structure.json".equals(child.getName())) {
+                bundleStructureJson = content;
+            }
+
+            JSONObject item = new JSONObject();
+            item.put("path", root.toPath().relativize(child.toPath()).toString().replace('\\', '/'));
+            item.put("content", content);
+            files.put(item);
+        }
+
+        return bundleStructureJson;
+    }
+
+    private static String readTextFile(File file) throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        try (InputStream in = new FileInputStream(file)) {
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                bos.write(buffer, 0, read);
+            }
+        }
+        return new String(bos.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    private static void deleteRecursively(File file) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                deleteRecursively(child);
+            }
+        }
+        //noinspection ResultOfMethodCallIgnored
+        file.delete();
+    }
+
 
     static native long shader_init_from_texts(String name, String fragment, String vertex);
     static native int shader_get_id(long ptr);
@@ -72,11 +204,26 @@ class Native {
     static native void model_rotate(long ptr, int i, double x, double y, double z);
     static native void model_flatten_rotate(long ptr, int i, long surfacePtr);
     static native long[] model_create_flatten_planes(long ptr, int i);
+    static native boolean model_cut(long ptr, int i, double zHeight, double rotX, double rotY, boolean keepUpper, boolean keepLower);
     static native void model_auto_orient(long ptr, int i);
     static native boolean model_is_big_object(long ptr, int i);
     static native int model_get_extruder(long ptr, int i);
     static native void model_set_extruder(long ptr, int i, int extruder);
-    static native long model_slice(long ptr, String configPath, String path, SliceListener listener) throws Slic3rRuntimeError;
+    // ---- Multi-color painting (mmu segmentation) ----
+    static native long paint_begin(long modelPtr, int objIdx);
+    static native double[] paint_raycast(long sessionPtr, double[] origin, double[] dir);
+    static native void paint_brush(long sessionPtr, double[] hit, int facetStart, double radius, int filamentIdx, double[] cameraPos);
+    static native void paint_bucket(long sessionPtr, double[] hit, int facetStart, int filamentIdx, boolean propagate, double angle);
+    static native void paint_height(long sessionPtr, double zMin, double zMax, int filamentIdx);
+    static native void paint_clear(long sessionPtr);
+    static native void paint_commit(long sessionPtr);
+    static native float[] paint_get_mesh(long sessionPtr, int filamentIdx);
+    static native int glmodel_init_from_paint(long glPtr, long sessionPtr, int filamentIdx);
+    static native void paint_end(long sessionPtr);
+    static native int model_build_paint_overlay(long modelPtr, int objIdx, long glPtr, int filamentIdx);
+    static native boolean model_has_paint(long modelPtr, int objIdx);
+
+    static native long model_slice(long ptr, String configPath, String path, SliceListener listener, int numFilaments, int[] filamentColors, int calibMode, double calibStart, double calibEnd, double calibStep) throws Slic3rRuntimeError;
     static native void model_export_3mf(long ptr, String configPath, String path) throws Slic3rRuntimeError;
     static native void model_release(long ptr);
 
@@ -94,11 +241,17 @@ class Native {
     static native void vgcode_load(long ptr, long resultPtr);
     static native void vgcode_render(long ptr, float[] viewMatrix, float[] projectionMatrix);
     static native void vgcode_set_layers_view_range(long ptr, long min, long max);
+    static native void vgcode_set_infill_visibility_depth(long ptr, int depth);
+    static native void vgcode_set_fast_mode(long ptr, boolean fastMode);
+    static native void vgcode_set_selected_object_id(long ptr, int id);
     static native long[] vgcode_get_layers_view_range(long ptr);
     static native float vgcode_get_estimated_time(long ptr);
     static native float vgcode_get_estimated_time_role(long ptr, int role);
     static native boolean vgcode_is_extrusion_role_visible(long ptr, int role);
     static native void vgcode_toggle_extrusion_role_visibility(long ptr, int role);
+    static native void vgcode_set_view_type(long ptr, int type);
+    static native int vgcode_get_view_type(long ptr);
+    static native void vgcode_set_tool_colors(long ptr, int[] colors);
     static native void vgcode_reset(long ptr);
     static native void vgcode_release(long ptr);
 

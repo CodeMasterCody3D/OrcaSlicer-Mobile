@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2022 Vojtěch Bubník @bubnikv, Lukáš Matěna @lukasmatena
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include <algorithm>
 #include <vector>
 #include <float.h>
@@ -68,8 +64,10 @@ void EdgeGrid::Grid::create(const std::vector<Points> &polygons, coord_t resolut
 					open = false;
 					-- end;
 				}
-			} else
-				assert(*begin != end[-1]);
+            } else {
+                //assert(*begin != end[-1]);
+            }
+
 			m_contours.emplace_back(begin, end, open);
 		}
 
@@ -146,8 +144,8 @@ void EdgeGrid::Grid::create_from_m_contours(coord_t resolution)
 	assert(resolution > 0);
 	// 1) Measure the bounding box.
 	for (const Contour &contour : m_contours) {
-		assert(contour.num_segments() > 0);
-		assert(*contour.begin() != contour.end()[-1]);
+		//assert(contour.num_segments() > 0);
+		//assert(*contour.begin() != contour.end()[-1]);
 		for (const Slic3r::Point &pt : contour) 
 			m_bbox.merge(pt);
 	}
@@ -1311,9 +1309,9 @@ Polygons EdgeGrid::Grid::contours_simplified(coord_t offset, bool fill_holes) co
 	// 1) Collect the lines.
 	std::vector<Line> lines;
 	EndPointMapType start_point_to_line_idx;
-	for (int r = 0; r <= int(m_rows); ++ r) {
-		for (int c = 0; c <= int(m_cols); ++ c) {
-			int  addr    = (r + 1) * cell_cols + c + 1;
+	for (coord_t r = 0; r <= coord_t(m_rows); ++ r) {
+		for (coord_t c = 0; c <= coord_t(m_cols); ++ c) {
+			size_t  addr    = (r + 1) * cell_cols + c + 1;
 			bool left    = cell_inside[addr - 1];
 			bool top     = cell_inside[addr - cell_cols];
 			bool current = cell_inside[addr];

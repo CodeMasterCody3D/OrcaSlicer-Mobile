@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2018 - 2021 Vojtěch Bubník @bubnikv
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_GCode_PostProcessor_hpp_
 #define slic3r_GCode_PostProcessor_hpp_
 
@@ -29,6 +25,9 @@ inline bool run_post_process_scripts(std::string &src_path, const DynamicPrintCo
 	std::string src_path_name = src_path;
 	return run_post_process_scripts(src_path, false, "File", src_path_name, config);
 }
+
+// BBS
+extern void gcode_add_line_number(const std::string &path, const DynamicPrintConfig &config);
 
 } // namespace Slic3r
 

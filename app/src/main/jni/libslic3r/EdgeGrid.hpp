@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Vojtěch Bubník @bubnikv, Lukáš Hejl @hejllukas, Lukáš Matěna @lukasmatena
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_EdgeGrid_hpp_
 #define slic3r_EdgeGrid_hpp_
 
@@ -228,6 +224,8 @@ public:
 						iy += 1;
 						assert(iy <= iyb);
 					}
+					if (ix < 0 || iy < 0 || ix >= (int64_t)m_cols || iy >= (int64_t)m_rows)
+						return; 
 					if (! visitor(iy, ix))
 						return;
 				} while (ix != ixb || iy != iyb);
@@ -249,6 +247,8 @@ public:
 						iy -= 1;
 						assert(iy >= iyb);
 					}
+					if (ix < 0 || iy < 0 || ix >= (int64_t)m_cols || iy >= (int64_t)m_rows)
+						return; 
 					if (! visitor(iy, ix))
 						return;
 				} while (ix != ixb || iy != iyb);
@@ -274,6 +274,8 @@ public:
 						iy += 1;
 						assert(iy <= iyb);
 					}
+					if (ix < 0 || iy < 0 || ix >= (int64_t)m_cols || iy >= (int64_t)m_rows)
+						return; 
 					if (! visitor(iy, ix))
 						return;
 				} while (ix != ixb || iy != iyb);
@@ -311,6 +313,8 @@ public:
 						iy -= 1;
 						assert(iy >= iyb);
 					}
+					if (ix < 0 || iy < 0 || ix >= (int64_t)m_cols || iy >= (int64_t)m_rows)
+						return; 
 					if (! visitor(iy, ix))
 						return;
 				} while (ix != ixb || iy != iyb);

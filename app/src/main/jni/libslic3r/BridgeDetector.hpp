@@ -1,8 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Pavel Mikuš @Godrak, Vojtěch Bubník @bubnikv
-///|/ Copyright (c) Slic3r 2014 - 2015 Alessandro Ranellucci @alranel
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_BridgeDetector_hpp_
 #define slic3r_BridgeDetector_hpp_
 
@@ -14,10 +9,7 @@
 #include "PrincipalComponents2D.hpp"
 #include "libslic3r.h"
 #include "ExPolygon.hpp"
-#include <cmath>
 #include <string>
-#include <unordered_map>
-#include <vector>
 
 namespace Slic3r {
 
@@ -46,8 +38,7 @@ public:
     BridgeDetector(const ExPolygons &_expolygons, const ExPolygons &_lower_slices, coord_t _extrusion_width);
     // If bridge_direction_override != 0, then the angle is used instead of auto-detect.
     bool detect_angle(double bridge_direction_override = 0.);
-    // Coverage is currently only used by the unit tests. It is extremely slow and unreliable!
-    Polygons coverage(double angle = -1) const;
+    Polygons coverage(double angle = -1, bool precise = true) const;
     void unsupported_edges(double angle, Polylines* unsupported) const;
     Polylines unsupported_edges(double angle = -1) const;
     
@@ -58,15 +49,16 @@ private:
     void initialize();
 
     struct BridgeDirection {
-        BridgeDirection(double a = -1.) : angle(a), coverage(0.), max_length(0.) {}
+        BridgeDirection(double a = -1.) : angle(a), coverage(0.), max_length(0.), archored_percent(0.){}
         // the best direction is the one causing most lines to be bridged (thus most coverage)
         bool operator<(const BridgeDirection &other) const {
             // Initial sort by coverage only - comparator must obey strict weak ordering
-            return this->coverage > other.coverage;
+            return this->coverage > other.coverage;//this->archored_percent > other.archored_percent;
         };
         double angle;
         double coverage;
         double max_length;
+        double archored_percent;
     };
 
     // Get possible briging direction candidates.

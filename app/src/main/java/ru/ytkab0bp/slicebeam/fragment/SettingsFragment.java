@@ -139,6 +139,10 @@ public class SettingsFragment extends ProfileListFragment {
                             })
                             .show();
                 })),
+                new OptionElement(R.drawable.printer_outline_28, getContext().getString(R.string.SettingsAddPrinter)).setOnClick(() -> {
+                    Activity act = (Activity) getContext();
+                    act.startActivity(new Intent(act, SetupActivity.class).putExtra(SetupActivity.EXTRA_ADD_PRINTER, true));
+                }),
                 new OptionElement(R.drawable.info_outline_28, getContext().getString(R.string.SettingsAbout)).setOnClick(() -> {
                     Activity act = (Activity) getContext();
                     act.startActivity(new Intent(act, SetupActivity.class).putExtra(SetupActivity.EXTRA_ABOUT, true));

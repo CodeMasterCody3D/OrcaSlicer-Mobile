@@ -1,9 +1,5 @@
-///|/ Copyright (c) Prusa Research 2020 - 2023 Tomáš Mészáros @tamasmeszaros, Lukáš Hejl @hejllukas
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
-#ifndef PRUSASLICER_OPTIMIZER_HPP
-#define PRUSASLICER_OPTIMIZER_HPP
+#ifndef OPTIMIZER_HPP
+#define OPTIMIZER_HPP
 
 #include <utility>
 #include <tuple>
@@ -14,21 +10,7 @@
 #include <cassert>
 #include <optional>
 
-#ifdef WIN32
-#undef min
-#undef max
-#endif
-
 namespace Slic3r { namespace opt {
-
-template<class T, class O = T>
-using FloatingOnly = std::enable_if_t<std::is_floating_point<T>::value, O>;
-
-template<class T, class = FloatingOnly<T>>
-constexpr T NaN = std::numeric_limits<T>::quiet_NaN();
-
-constexpr float NaNf = NaN<float>;
-constexpr double NaNd = NaN<double>;
 
 // A type to hold the complete result of the optimization.
 template<size_t N> struct Result {
@@ -59,13 +41,13 @@ template<size_t N> using Bounds = std::array<Bound, N>;
 class StopCriteria {
 
     // If the absolute value difference between two scores.
-    double m_abs_score_diff = NaNd;
+    double m_abs_score_diff = std::nan("");
 
     // If the relative value difference between two scores.
-    double m_rel_score_diff = NaNd;
+    double m_rel_score_diff = std::nan("");
 
     // Stop if this value or better is found.
-    double m_stop_score = NaNd;
+    double m_stop_score = std::nan("");
 
     // A predicate that if evaluates to true, the optimization should terminate
     // and the best result found prior to termination should be returned.
@@ -97,7 +79,7 @@ public:
 
     double stop_score() const { return m_stop_score; }
 
-    StopCriteria & max_iterations(unsigned val)
+    StopCriteria & max_iterations(double val)
     {
         m_max_iterations = val; return *this;
     }
@@ -155,25 +137,16 @@ public:
     // For each dimension an interval (Bound) has to be given marking the bounds
     // for that dimension.
     //
-    // Optionally, some constraints can be given in the form of double(Input<N>)
-    // functors. The parameters eq_constraints and ineq_constraints can be used
-    // to add equality and inequality (<= 0) constraints to the optimization.
-    // Note that it is up the the particular method if it accepts these
-    // constraints.
-    //
     // initvals have to be within the specified bounds, otherwise its undefined
     // behavior.
     //
     // Func can return a score of type double or optionally a ScoreGradient
     // class to indicate the function gradient for a optimization methods that
     // make use of the gradient.
-    template<class Func, size_t N, class...EqConstraints, class...IneqConstraints>
+    template<class Func, size_t N>
     Result<N> optimize(Func&& /*func*/,
                        const Input<N> &/*initvals*/,
-                       const Bounds<N>& /*bounds*/,
-                       const std::tuple<EqConstraints...> &eq_constraints = {},
-                       const std::tuple<IneqConstraints...> &ineq_constraint = {}
-                       ) { return {}; }
+                       const Bounds<N>& /*bounds*/) { return {}; }
 
     // optional for randomized methods:
     void seed(long /*s*/) {}

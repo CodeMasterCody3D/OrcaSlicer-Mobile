@@ -2,7 +2,7 @@
     <style name="Base.Theme.SliceBeam" parent="Theme.Material3.Light.NoActionBar">
         <item name="android:windowBackground">#FFF</item>
         <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="s">@drawable/icon_adaptive_foreground</item>
-        <item name="android:windowSplashScreenIconBackgroundColor" tools:targetApi="s">#3A3A3A</item>
+        <item name="android:windowSplashScreenIconBackgroundColor" tools:targetApi="s">#2B2B2B</item>
         <item name="android:enforceNavigationBarContrast" tools:targetApi="q">false</item>
         <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
     </style>

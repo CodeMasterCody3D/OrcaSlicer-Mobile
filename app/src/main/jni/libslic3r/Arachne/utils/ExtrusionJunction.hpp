@@ -42,6 +42,10 @@ struct ExtrusionJunction
     bool operator==(const ExtrusionJunction &other) const {
         return p == other.p && w == other.w && perimeter_index == other.perimeter_index;
     }
+
+    coord_t x() const { return p.x(); }
+    coord_t y() const { return p.y(); }
+    coord_t z() const { return w; }
 };
 
 inline Point operator-(const ExtrusionJunction& a, const ExtrusionJunction& b)
@@ -55,7 +59,8 @@ inline const Point& make_point(const ExtrusionJunction& ej)
     return ej.p;
 }
 
-using LineJunctions = std::vector<ExtrusionJunction>; //<! The junctions along a line without further information. See \ref ExtrusionLine for a more extensive class.
+using LineJunctions      = std::vector<ExtrusionJunction>; //<! The junctions along a line without further information. See \ref ExtrusionLine for a more extensive class.
+using ExtrusionJunctions = std::vector<ExtrusionJunction>;
 
 }
 #endif // UTILS_EXTRUSION_JUNCTION_H

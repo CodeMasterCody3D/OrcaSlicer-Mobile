@@ -39,6 +39,11 @@ public class GLModel {
         Native.glmodel_init_from_model_object(pointer, model.pointer, i);
     }
 
+    /** Build this model from facets painted with the given filament in a paint session (mesh-local coords). */
+    public int initFromPaint(long paintSessionPtr, int filamentIdx) {
+        return Native.glmodel_init_from_paint(pointer, paintSessionPtr, filamentIdx);
+    }
+
     public void setColor(int color) {
         Native.glmodel_set_color(pointer, Color.red(color) / (float) 0xFF, Color.green(color) / (float) 0xFF, Color.blue(color) / (float) 0xFF, Color.alpha(color) / (float) 0xFF);
     }

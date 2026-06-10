@@ -71,9 +71,10 @@ public class Slic3rLocalization {
     }
 
     private static String replaceStr(String val) {
+        if (val == null) return "";
         return val.replace("\\n", "\n").replaceAll("\\\\(.)", "$1")
-                .replace("Slic3r", "OrcaSlicer Mobile")
-                .replace("PrusaSlicer", "OrcaSlicer Mobile");
+                .replaceAll("(?i)slic3r", "OrcaSlicer Mobile")
+                .replaceAll("(?i)prusasl?i[sc]er", "OrcaSlicer Mobile");
     }
 
     public static String getString(String key) {

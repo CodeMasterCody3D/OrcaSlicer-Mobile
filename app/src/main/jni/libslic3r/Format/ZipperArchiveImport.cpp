@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2022 - 2023 Tomáš Mészáros @tamasmeszaros, David Kocík @kocikdav
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "ZipperArchiveImport.hpp"
 
 #include "libslic3r/miniz_extension.hpp"
@@ -139,7 +135,7 @@ std::pair<DynamicPrintConfig, ConfigSubstitutions> extract_profile(
     // as output argument then replace it with the readed profile to report
     // that it was empty.
     profile_use = profile_in.empty() ? profile_out : profile_in;
-    profile_out += std::move(profile_in);
+    profile_out = profile_in;
 
     return {profile_use, std::move(config_substitutions)};
 }

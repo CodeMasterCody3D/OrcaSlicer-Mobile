@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2022 - 2023 Tomáš Mészáros @tamasmeszaros
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef MODELTOCSGMESH_HPP
 #define MODELTOCSGMESH_HPP
 
@@ -23,7 +19,7 @@ enum ModelParts {
 };
 
 template<class OutIt>
-void model_to_csgmesh(const ModelObject &mo,
+bool model_to_csgmesh(const ModelObject &mo,
                       const Transform3d &trafo, // Applies to all exported parts
                       OutIt              out,   // Output iterator
                       // values of ModelParts OR-ed
@@ -34,6 +30,7 @@ void model_to_csgmesh(const ModelObject &mo,
     bool do_negatives  = parts_to_include & mpartsNegative;
     bool do_drillholes = parts_to_include & mpartsDrillHoles;
     bool do_splits     = parts_to_include & mpartsDoSplits;
+    bool has_splitable_volume = false;
 
     for (const ModelVolume *vol : mo.volumes) {
         if (vol && vol->mesh_ptr() &&
@@ -62,29 +59,32 @@ void model_to_csgmesh(const ModelObject &mo,
                 part_end.stack_operation = CSGStackOp::Pop;
                 *out = std::move(part_end);
                 ++out;
+                has_splitable_volume = true;
             } else {
                 CSGPart part{&(vol->mesh().its),
                              vol->is_model_part() ? CSGType::Union : CSGType::Difference,
                              (trafo * vol->get_matrix()).cast<float>()};
-
+                part.name = vol->name;
                 *out = std::move(part);
                 ++out;
             }
         }
     }
 
-    if (do_drillholes) {
-        sla::DrainHoles drainholes = sla::transformed_drainhole_points(mo, trafo);
+    //if (do_drillholes) {
+    //    sla::DrainHoles drainholes = sla::transformed_drainhole_points(mo, trafo);
 
-        for (const sla::DrainHole &dhole : drainholes) {
-            CSGPart part{std::make_unique<const indexed_triangle_set>(
-                             dhole.to_mesh()),
-                         CSGType::Difference};
+    //    for (const sla::DrainHole &dhole : drainholes) {
+    //        CSGPart part{std::make_unique<const indexed_triangle_set>(
+    //                         dhole.to_mesh()),
+    //                     CSGType::Difference};
 
-            *out = std::move(part);
-            ++out;
-        }
-    }
+    //        *out = std::move(part);
+    //        ++out;
+    //    }
+    //}
+
+    return has_splitable_volume;
 }
 
 }} // namespace Slic3r::csg

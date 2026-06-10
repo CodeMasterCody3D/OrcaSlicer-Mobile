@@ -1,32 +1,14 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Vojtěch Bubník @bubnikv, Enrico Turri @enricoturri1966, Lukáš Matěna @lukasmatena, David Kocík @kocikdav, Tomáš Mészáros @tamasmeszaros, Vojtěch Král @vojtechkral, Oleksandra Iushchenko @YuSanka
-///|/ Copyright (c) 2018 fredizzimo @fredizzimo
-///|/ Copyright (c) Slic3r 2013 - 2016 Alessandro Ranellucci @alranel
-///|/ Copyright (c) 2015 Maksim Derbasov @ntfshard
-///|/
-///|/ ported from lib/Slic3r/Config.pm:
-///|/ Copyright (c) Prusa Research 2016 - 2022 Vojtěch Bubník @bubnikv
-///|/ Copyright (c) 2017 Joseph Lenox @lordofhyphens
-///|/ Copyright (c) Slic3r 2011 - 2016 Alessandro Ranellucci @alranel
-///|/ Copyright (c) 2015 Alexander Rössler @machinekoder
-///|/ Copyright (c) 2012 Henrik Brix Andersen @henrikbrixandersen
-///|/ Copyright (c) 2012 Mark Hindess
-///|/ Copyright (c) 2012 Josh McCullough
-///|/ Copyright (c) 2011 - 2012 Michael Moon
-///|/ Copyright (c) 2012 Simon George
-///|/ Copyright (c) 2012 Johannes Reinhardt
-///|/ Copyright (c) 2011 Clarence Risher
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "Config.hpp"
 #include "format.hpp"
 #include "Utils.hpp"
 #include "LocalesUtils.hpp"
+#include "Preset.hpp"
 
 #include <assert.h>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <regex>
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/erase.hpp>
@@ -36,15 +18,17 @@
 #include <boost/config.hpp>
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/log/trivial.hpp>
 #include <boost/nowide/cstdlib.hpp>
 #include <boost/nowide/iostream.hpp>
 #include <boost/nowide/fstream.hpp>
-#include <boost/nowide/cstdio.hpp>
 #include <boost/property_tree/ini_parser.hpp>
 #include <boost/format.hpp>
 #include <string.h>
+//BBS: add json support
+#include "nlohmann/json.hpp"
 
-#include <LibBGCode/binarize/binarize.hpp>
+using namespace nlohmann;
 
 //FIXME for GCodeFlavor and gcfMarlin (for forward-compatibility conversion)
 // This is not nice, likely it would be better to pass the ConfigSubstitutionContext to handle_legacy().
@@ -52,7 +36,16 @@
 
 namespace Slic3r {
 
-// Escape \n, \r and backslash
+//BBS: add json support
+//static const std::string CONFIG_VERSION_KEY = "version";
+//static const std::string CONFIG_NAME_KEY = "name";
+//static const std::string CONFIG_URL_KEY = "url";
+//static const std::string CONFIG_TYPE_KEY = "type";
+//static const std::string CONFIG_FROM_KEY = "from";
+//static const std::string CONFIG_INHERITS_KEY = "inherits";
+//static const std::string CONFIG_INSTANT_KEY = "instantiation";
+
+// Escape double quotes, \n, \r and backslash
 std::string escape_string_cstyle(const std::string &str)
 {
     // Allocate a buffer twice the input string length,
@@ -67,9 +60,9 @@ std::string escape_string_cstyle(const std::string &str)
         } else if (c == '\n') {
             (*outptr ++) = '\\';
             (*outptr ++) = 'n';
-        } else if (c == '\\') {
-            (*outptr ++) = '\\';
-            (*outptr ++) = '\\';
+        } else if (c == '\\' || c == '"') {
+            (*outptr++) = '\\';
+            (*outptr++) = c;
         } else
             (*outptr ++) = c;
     }
@@ -96,7 +89,7 @@ std::string escape_strings_cstyle(const std::vector<std::string> &strs)
         bool should_quote = strs.size() == 1 && str.empty();
         for (size_t i = 0; i < str.size(); ++ i) {
             char c = str[i];
-            if (c == ' ' || c == ';' || c == '\t' || c == '\\' || c == '"' || c == '\r' || c == '\n') {
+            if (c == ' ' || c == '\t' || c == '\\' || c == '"' || c == '\r' || c == '\n') {
                 should_quote = true;
                 break;
             }
@@ -126,7 +119,7 @@ std::string escape_strings_cstyle(const std::vector<std::string> &strs)
     return std::string(out.data(), outptr - out.data());
 }
 
-// Unescape \n, \r and backslash
+// Unescape double quotes, \n, \r and backslash
 bool unescape_string_cstyle(const std::string &str, std::string &str_out)
 {
     std::vector<char> out(str.size(), 0);
@@ -266,8 +259,6 @@ ConfigOption* ConfigOptionDef::create_empty_option() const
 {
 	if (this->nullable) {
 	    switch (this->type) {
-        case coFloat:           return new ConfigOptionFloatNullable();
-        case coInt:             return new ConfigOptionIntNullable();
 	    case coFloats:          return new ConfigOptionFloatsNullable();
 	    case coInts:            return new ConfigOptionIntsNullable();
 	    case coPercents:        return new ConfigOptionPercentsNullable();
@@ -293,8 +284,9 @@ ConfigOption* ConfigOptionDef::create_empty_option() const
 	//    case coPoint3s:         return new ConfigOptionPoint3s();
 	    case coBool:            return new ConfigOptionBool();
 	    case coBools:           return new ConfigOptionBools();
-	    case coEnum:            return new ConfigOptionEnumGeneric(this->enum_def->m_enum_keys_map);
-	    case coEnums:           return new ConfigOptionEnumsGeneric(this->enum_def->m_enum_keys_map);
+	    case coEnum:            return new ConfigOptionEnumGeneric(this->enum_keys_map);
+        // BBS
+        case coEnums:           return new ConfigOptionEnumsGeneric(this->enum_keys_map);
 	    default:                throw ConfigurationError(std::string("Unknown option type for option ") + this->label);
 	    }
 	}
@@ -302,15 +294,46 @@ ConfigOption* ConfigOptionDef::create_empty_option() const
 
 ConfigOption* ConfigOptionDef::create_default_option() const
 {
-    if (this->default_value)
-        return (this->default_value->type() == coEnum) ?
-            // Special case: For a DynamicConfig, convert a templated enum to a generic enum.
-            new ConfigOptionEnumGeneric(this->enum_def->m_enum_keys_map, this->default_value->getInt()) : 
-               (this->default_value->type() == coEnums) ?
-            // Special case: For a DynamicConfig, convert a templated enums to a generic enums.
-            new ConfigOptionEnumsGeneric(this->enum_def->m_enum_keys_map, this->default_value->getInts()) :
-            this->default_value->clone();
+    if (this->default_value) {
+        ConfigOptionType type = this->default_value->type();
+        if (type == coEnum)
+            return new ConfigOptionEnumGeneric(this->enum_keys_map, this->default_value->getInt());
+
+        if (type == coEnums) {
+            auto dft = this->default_value->clone();
+            if (dft->nullable()) {
+                ConfigOptionEnumsGenericNullable *opt = dynamic_cast<ConfigOptionEnumsGenericNullable *>(this->default_value->clone());
+                opt->keys_map = this->enum_keys_map;
+                return opt;
+            } else {
+                ConfigOptionEnumsGeneric *opt = dynamic_cast<ConfigOptionEnumsGeneric *>(this->default_value->clone());
+                opt->keys_map = this->enum_keys_map;
+                return opt;
+            }
+            delete dft;
+        }
+
+        return this->default_value->clone();
+    }
     return this->create_empty_option();
+}
+
+bool ConfigOptionDef::is_value_valid(const double value, const int max_precision /*= 4*/) const
+{
+    // Special handling for the nil values
+    // The nil value is a valid one only for nullable options
+    if (std::isnan(value))
+        return this->nullable;
+
+    // Special handling of 0
+    if (this->min == 0.f && value < 0)
+        return false;
+
+    const double ep = std::pow(0.1, max_precision);
+    if (is_approx(value, (double) this->min, ep) || is_approx(value, (double) this->max, ep))
+        return true;
+
+    return this->min <= value && value <= this->max;
 }
 
 // Assignment of the serialization IDs is not thread safe. The Defs shall be initialized from the main thread!
@@ -332,36 +355,14 @@ ConfigOptionDef* ConfigDef::add_nullable(const t_config_option_key &opt_key, Con
 	return def;
 }
 
-void ConfigDef::finalize()
-{
-    // Validate & finalize open & closed enums.
-    for (std::pair<const t_config_option_key, ConfigOptionDef> &kvp : options) {
-        ConfigOptionDef& def = kvp.second;
-        if (def.type == coEnum || def.type == coEnums) {
-            assert(def.enum_def);
-            assert(def.enum_def->is_valid_closed_enum());
-            assert(! def.is_gui_type_enum_open());
-            def.enum_def->finalize_closed_enum();
-        } else if (def.is_gui_type_enum_open()) {
-            assert(def.enum_def);
-            assert(def.enum_def->is_valid_open_enum());
-            assert(def.gui_type != ConfigOptionDef::GUIType::i_enum_open || def.type == coInt || def.type == coInts);
-            assert(def.gui_type != ConfigOptionDef::GUIType::f_enum_open || def.type == coFloat || def.type == coPercent || def.type == coFloatOrPercent);
-            assert(def.gui_type != ConfigOptionDef::GUIType::select_open || def.type == coString || def.type == coStrings);
-        } else {
-            assert(! def.enum_def);
-        }
-    }
-}
-
 std::ostream& ConfigDef::print_cli_help(std::ostream& out, bool show_defaults, std::function<bool(const ConfigOptionDef &)> filter) const
 {
     // prepare a function for wrapping text
-    auto wrap = [](const std::string& text, size_t line_length) -> std::string {
+    auto wrap = [](std::string text, size_t line_length) -> std::string {
         std::istringstream words(text);
         std::ostringstream wrapped;
         std::string word;
- 
+
         if (words >> word) {
             wrapped << word;
             size_t space_left = line_length - word.length();
@@ -385,19 +386,19 @@ std::ostream& ConfigDef::print_cli_help(std::ostream& out, bool show_defaults, s
         if (filter(def))
             categories.insert(def.category);
     }
-    
-    for (const std::string& category : categories) {
+
+    for (auto category : categories) {
         if (category != "") {
             out << category << ":" << std::endl;
         } else if (categories.size() > 1) {
             out << "Misc options:" << std::endl;
         }
-        
+
         for (const auto& opt : this->options) {
             const ConfigOptionDef& def = opt.second;
 			if (def.category != category || def.cli == ConfigOptionDef::nocli || !filter(def))
                 continue;
-            
+
             // get all possible variations: --foo, --foobar, -f...
             std::vector<std::string> cli_args = def.cli_args(opt.first);
 			if (cli_args.empty())
@@ -405,22 +406,26 @@ std::ostream& ConfigDef::print_cli_help(std::ostream& out, bool show_defaults, s
 
             for (auto& arg : cli_args) {
                 arg.insert(0, (arg.size() == 1) ? "-" : "--");
-                if (def.type == coFloat || def.type == coInt || def.type == coFloatOrPercent
-                    || def.type == coFloats || def.type == coInts) {
-                    arg += " N";
+                //BBS: refine the print help format
+                if (!def.cli_params.empty())
+                    arg += " " + def.cli_params;
+                /*if ( def.type == coInt || def.type == coInts) {
+                    arg += " int_value";
+                } else if (def.type == coFloat ||  def.type == coFloatOrPercent || def.type == coFloats) {
+                    arg += " float_value";
                 } else if (def.type == coPoint) {
                     arg += " X,Y";
                 } else if (def.type == coPoint3) {
                     arg += " X,Y,Z";
                 } else if (def.type == coString || def.type == coStrings) {
-                    arg += " ABCD";
-                }
+                    arg += " filename_lists";
+                }*/
             }
-            
+
             // left: command line options
             const std::string cli = boost::algorithm::join(cli_args, ", ");
             out << " " << std::left << std::setw(20) << cli;
-            
+
             // right: option description
             std::string descr = def.tooltip;
             bool show_defaults_this = show_defaults || def.opt_key == "config_compatibility";
@@ -429,17 +434,17 @@ std::ostream& ConfigDef::print_cli_help(std::ostream& out, bool show_defaults, s
                 descr += " (";
                 if (!def.sidetext.empty()) {
                     descr += def.sidetext + ", ";
-                } else if (def.enum_def && def.enum_def->has_values()) {
-                    descr += boost::algorithm::join(def.enum_def->values(), ", ") + "; ";
+                } else if (!def.enum_values.empty()) {
+                    descr += boost::algorithm::join(def.enum_values, ", ") + "; ";
                 }
                 descr += "default: " + def.default_value->serialize() + ")";
             }
-            
+
             // wrap lines of description
             descr = wrap(descr, 80);
             std::vector<std::string> lines;
             boost::split(lines, descr, boost::is_any_of("\n"));
-            
+
             // if command line options are too long, print description in new line
             for (size_t i = 0; i < lines.size(); ++i) {
                 if (i == 0 && cli.size() > 19)
@@ -449,42 +454,6 @@ std::ostream& ConfigDef::print_cli_help(std::ostream& out, bool show_defaults, s
                 out << lines[i] << std::endl;
             }
         }
-    }
-    return out;
-}
-
-std::string ConfigBase::SetDeserializeItem::format(std::initializer_list<int> values)
-{
-    std::string out;
-    int i = 0;
-    for (int v : values) {
-        if (i ++ > 0)
-            out += ", ";
-        out += std::to_string(v);
-    }
-    return out;
-}
-
-std::string ConfigBase::SetDeserializeItem::format(std::initializer_list<float> values)
-{
-    std::string out;
-    int i = 0;
-    for (float v : values) {
-        if (i ++ > 0)
-            out += ", ";
-        out += float_to_string_decimal_point(double(v));
-    }
-    return out;
-}
-
-std::string ConfigBase::SetDeserializeItem::format(std::initializer_list<double> values)
-{
-    std::string out;
-    int i = 0;
-    for (float v : values) {
-        if (i ++ > 0)
-            out += ", ";
-        out += float_to_string_decimal_point(v);
     }
     return out;
 }
@@ -500,6 +469,23 @@ void ConfigBase::apply_only(const ConfigBase &other, const t_config_option_keys 
         if (my_opt == nullptr) {
             // opt_key does not exist in this ConfigBase and it cannot be created, because it is not defined by this->def().
             // This is only possible if other is of DynamicConfig type.
+            if (auto n = opt_key.find('#'); n != std::string::npos) {
+                auto opt_key2 = opt_key.substr(0, n);
+                auto my_opt2 = dynamic_cast<ConfigOptionVectorBase*>(this->option(opt_key2));
+                auto other_opt = other.option(opt_key2);
+                if (my_opt2 == nullptr && other_opt) {
+                    my_opt2 = dynamic_cast<ConfigOptionVectorBase *>(this->option(opt_key2, true));
+                    if (my_opt2->empty()) {
+                        my_opt2->resize(1, other_opt);
+                    }
+                }   
+                if (my_opt2) {
+                    int index = std::atoi(opt_key.c_str() + n + 1);
+                    if (other_opt)
+                        my_opt2->set_at(other_opt, index, index);
+                    continue;
+                }
+            }
             if (ignore_nonexistent)
                 continue;
             throw UnknownOptionException(opt_key);
@@ -514,9 +500,12 @@ void ConfigBase::apply_only(const ConfigBase &other, const t_config_option_keys 
 }
 
 // Are the two configs equal? Ignoring options not present in both configs.
-bool ConfigBase::equals(const ConfigBase &other) const
-{ 
+//BBS: add skipped keys logic
+bool ConfigBase::equals(const ConfigBase &other, const std::set<std::string>* skipped_keys) const
+{
     for (const t_config_option_key &opt_key : this->keys()) {
+        if (skipped_keys && (skipped_keys->count(opt_key) != 0))
+            continue;
         const ConfigOption *this_opt  = this->option(opt_key);
         const ConfigOption *other_opt = other.option(opt_key);
         if (this_opt != nullptr && other_opt != nullptr && *this_opt != *other_opt)
@@ -588,9 +577,14 @@ bool ConfigBase::set_deserialize_nothrow(const t_config_option_key &opt_key_src,
     // Both opt_key and value may be modified by handle_legacy().
     // If the opt_key is no more valid in this version of Slic3r, opt_key is cleared by handle_legacy().
     this->handle_legacy(opt_key, value);
-    if (opt_key.empty())
+    if (opt_key.empty()) {
         // Ignore the option.
+        //BBS: record these options, keep only one repeated opt_key
+        auto iter = std::find(substitutions_ctxt.unrecogized_keys.begin(), substitutions_ctxt.unrecogized_keys.end(), opt_key_src);
+        if (iter == substitutions_ctxt.unrecogized_keys.end())
+            substitutions_ctxt.unrecogized_keys.push_back(opt_key_src);
         return true;
+    }
     return this->set_deserialize_raw(opt_key, value, substitutions_ctxt, append);
 }
 
@@ -630,22 +624,22 @@ bool ConfigBase::set_deserialize_raw(const t_config_option_key &opt_key_src, con
         if (optdef == nullptr)
             throw UnknownOptionException(opt_key);
     }
-    
+
     if (! optdef->shortcut.empty()) {
-        // Aliasing for example "solid_layers" to "top_solid_layers" and "bottom_solid_layers".
+        // Aliasing for example "solid_layers" to "top_shell_layers" and "bottom_shell_layers".
         for (const t_config_option_key &shortcut : optdef->shortcut)
             // Recursive call.
             if (! this->set_deserialize_raw(shortcut, value, substitutions_ctxt, append))
                 return false;
         return true;
     }
-    
+
     ConfigOption *opt = this->option(opt_key, true);
     assert(opt != nullptr);
     bool success     = false;
     bool substituted = false;
     if (optdef->type == coBools && substitutions_ctxt.rule != ForwardCompatibilitySubstitutionRule::Disable) {
-    	//FIXME Special handling of vectors of bools, quick and not so dirty solution before PrusaSlicer 2.3.2 release.
+        //FIXME Special handling of vectors of bools, quick and not so dirty solution before PrusaSlicer 2.3.2 release.
     	bool nullable = opt->nullable();
     	ConfigHelpers::DeserializationSubstitution default_value = ConfigHelpers::DeserializationSubstitution::DefaultsToFalse;
     	if (optdef->default_value) {
@@ -661,13 +655,14 @@ bool ConfigBase::set_deserialize_raw(const t_config_option_key &opt_key_src, con
     	success     = result != ConfigHelpers::DeserializationResult::Failed;
     	substituted = result == ConfigHelpers::DeserializationResult::Substituted;
     } else {
+		//bool test = (opt_key == "filament_end_gcode");
 		success = opt->deserialize(value, append);
 	    if (! success && substitutions_ctxt.rule != ForwardCompatibilitySubstitutionRule::Disable &&
 	        // Only allow substitutions of an enum value by another enum value or a boolean value with an enum value.
 	        // That means, we expect enum values being added in the future and possibly booleans being converted to enums.
-	        (optdef->type == coEnum || optdef->type == coBool) && ConfigHelpers::looks_like_enum_value(value)) {
+            (optdef->type == coEnum || optdef->type == coEnums || optdef->type == coBool) /*&& ConfigHelpers::looks_like_enum_value(value)*/) {
 	        // Deserialize failed, try to substitute with a default value.
-	        assert(substitutions_ctxt.rule == ForwardCompatibilitySubstitutionRule::Enable || substitutions_ctxt.rule == ForwardCompatibilitySubstitutionRule::EnableSilent);
+	        //assert(substitutions_ctxt.rule == ForwardCompatibilitySubstitutionRule::Enable || substitutions_ctxt.rule == ForwardCompatibilitySubstitutionRule::EnableSilent);
 	        if (optdef->type == coBool)
 	            static_cast<ConfigOptionBool*>(opt)->value = ConfigHelpers::enum_looks_like_true_value(value);
 	        else
@@ -696,28 +691,58 @@ double ConfigBase::get_abs_value(const t_config_option_key &opt_key) const
 {
     // Get stored option value.
     const ConfigOption *raw_opt = this->option(opt_key);
+    if (raw_opt == nullptr) {
+      std::stringstream ss;
+      ss << "You can't define an option that need " << opt_key << " without defining it!";
+      throw std::runtime_error(ss.str());
+    }
     assert(raw_opt != nullptr);
+
     if (raw_opt->type() == coFloat)
         return static_cast<const ConfigOptionFloat*>(raw_opt)->value;
+    if (raw_opt->type() == coInt)
+      return static_cast<const ConfigOptionInt *>(raw_opt)->value;
+    if (raw_opt->type() == coBool)
+      return static_cast<const ConfigOptionBool *>(raw_opt)->value ? 1 : 0;
+
+    const ConfigOptionPercent *cast_opt = nullptr;
     if (raw_opt->type() == coFloatOrPercent) {
-        // Get option definition.
-        const ConfigDef *def = this->def();
-        if (def == nullptr)
-            throw NoDefinitionException(opt_key);
-        const ConfigOptionDef *opt_def = def->get(opt_key);
-        assert(opt_def != nullptr);
-        // Compute absolute value over the absolute value of the base option.
-        //FIXME there are some ratio_over chains, which end with empty ratio_with.
-        // For example, XXX_extrusion_width parameters are not handled by get_abs_value correctly.
-        return opt_def->ratio_over.empty() ? 0. : 
-            static_cast<const ConfigOptionFloatOrPercent*>(raw_opt)->get_abs_value(this->get_abs_value(opt_def->ratio_over));
+        auto cofop = static_cast<const ConfigOptionFloatOrPercent*>(raw_opt);
+            if (cofop->value == 0 && boost::ends_with(opt_key, "_line_width")) {
+                return this->get_abs_value("line_width");
+            }
+            if (!cofop->percent)
+                return cofop->value;
+            cast_opt = cofop;
     }
+
+    if (raw_opt->type() == coPercent) {
+      cast_opt = static_cast<const ConfigOptionPercent *>(raw_opt);
+    }
+
+    // Get option definition.
+    const ConfigDef *def = this->def();
+    if (def == nullptr)
+        throw NoDefinitionException(opt_key);
+    const ConfigOptionDef *opt_def = def->get(opt_key);
+
+
+    assert(opt_def != nullptr);
+    if (opt_def->ratio_over == "")
+        return cast_opt->get_abs_value(1);
+    // Compute absolute value over the absolute value of the base option.
+    //FIXME there are some ratio_over chains, which end with empty ratio_with.
+    // For example, XXX_extrusion_width parameters are not handled by get_abs_value correctly.
+    return opt_def->ratio_over.empty() ? 0. :
+        static_cast<const ConfigOptionFloatOrPercent*>(raw_opt)->get_abs_value(this->get_abs_value(opt_def->ratio_over));
+    
+
     throw ConfigurationError("ConfigBase::get_abs_value(): Not a valid option type for get_abs_value()");
 }
 
 // Return an absolute value of a possibly relative config variable.
 // For example, return absolute infill extrusion width, either from an absolute value, or relative to a provided value.
-double ConfigBase::get_abs_value(const t_config_option_key &opt_key, double ratio_over) const 
+double ConfigBase::get_abs_value(const t_config_option_key &opt_key, double ratio_over) const
 {
     // Get stored option value.
     const ConfigOption *raw_opt = this->option(opt_key);
@@ -737,46 +762,353 @@ void ConfigBase::setenv_() const
         ss << "SLIC3R_";
         ss << *it;
         std::string envname = ss.str();
-        
+
         // capitalize environment variable name
         for (size_t i = 0; i < envname.size(); ++i)
             envname[i] = (envname[i] <= 'z' && envname[i] >= 'a') ? envname[i]-('a'-'A') : envname[i];
-        
+
         boost::nowide::setenv(envname.c_str(), this->opt_serialize(*it).c_str(), 1);
     }
 }
 
-ConfigSubstitutions ConfigBase::load(const std::string& filename, ForwardCompatibilitySubstitutionRule compatibility_rule)
+//BBS
+ConfigSubstitutions ConfigBase::load_string_map(std::map<std::string, std::string>& key_values, ForwardCompatibilitySubstitutionRule compatibility_rule)
 {
-    enum class EFileType
-    {
-        Ini,
-        AsciiGCode,
-        BinaryGCode
-    };
+    CNumericLocalesSetter locales_setter;
 
-    EFileType file_type;
-
-    if (is_gcode_file(filename)) {
-        FILE* file = boost::nowide::fopen(filename.c_str(), "rb");
-        if (file == nullptr)
-            throw Slic3r::RuntimeError(format("Error opening file %1%", filename));
-
-        std::vector<std::byte> cs_buffer(65536);
-        using namespace bgcode::core;
-        file_type = (is_valid_binary_gcode(*file, true, cs_buffer.data(), cs_buffer.size()) == EResult::Success) ? EFileType::BinaryGCode : EFileType::AsciiGCode;
-        fclose(file);
+    ConfigSubstitutionContext substitutions_ctxt(compatibility_rule);
+    std::map<std::string, std::string>::iterator it;
+    for (it = key_values.begin(); it != key_values.end(); it++) {
+        try {
+            t_config_option_key opt_key = it->first;
+            this->set_deserialize(opt_key, it->second, substitutions_ctxt);
+        }
+        catch (UnknownOptionException& /* e */) {
+            // ignore
+        }
     }
-    else 
-        file_type = EFileType::Ini;
+    return std::move(substitutions_ctxt.substitutions);
+}
 
-    switch (file_type)
-    {
-    case EFileType::Ini:         { return this->load_from_ini(filename, compatibility_rule); }
-    case EFileType::AsciiGCode:  { return this->load_from_gcode_file(filename, compatibility_rule);}
-    case EFileType::BinaryGCode: { return this->load_from_binary_gcode_file(filename, compatibility_rule);}
-    default:                     { throw Slic3r::RuntimeError(format("Invalid file %1%", filename)); }
+//BBS: add json support
+ConfigSubstitutions ConfigBase::load(const std::string &file, ForwardCompatibilitySubstitutionRule compatibility_rule)
+{
+    std::map<std::string, std::string> key_values;
+    if (is_gcode_file(file))
+        return this->load_from_gcode_file(file, compatibility_rule);
+    else if (is_json_file(file)) {
+        std::string reason;
+        return this->load_from_json(file, compatibility_rule, key_values, reason);
     }
+    else {
+        // SliceBeam stores its merged slicing config as a flat PrusaSlicer-style .ini; OrcaSlicer
+        // disabled the .ini loader (it uses JSON), so re-enable it for these files.
+        return this->load_from_ini(file, compatibility_rule);
+    }
+}
+
+//BBS: add json support
+ConfigSubstitutions ConfigBase::load_from_json(const std::string &file, ForwardCompatibilitySubstitutionRule compatibility_rule, std::map<std::string, std::string>& key_values, std::string& reason)
+{
+    int ret = 0;
+    ConfigSubstitutionContext substitutions_ctxt(compatibility_rule);
+
+    ret = load_from_json(file, substitutions_ctxt, true, key_values, reason);
+    return std::move(substitutions_ctxt.substitutions);
+}
+
+int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContext& substitution_context, bool load_inherits_to_config, std::map<std::string, std::string>& key_values, std::string& reason)
+{
+    json j;
+    std::list<std::string> different_settings_append;
+    std::string new_support_style;
+    std::string is_infill_first;
+    std::string get_wall_sequence;
+    bool is_project_settings = false;
+
+    CNumericLocalesSetter locales_setter;
+
+    std::function<bool(const json::const_iterator&, const char,const char,const bool,std::string&)> parse_str_arr = [&parse_str_arr](const json::const_iterator& it, const char single_sep,const char array_sep,const bool escape_string_style,std::string& value_str)->bool {
+        // must have consistent type name
+        std::string consistent_type;
+        for (auto iter = it.value().begin(); iter != it.value().end(); ++iter) {
+            if (consistent_type.empty())
+                consistent_type = iter.value().type_name();
+            else {
+                if (consistent_type != iter.value().type_name())
+                    return false;
+            }
+        }
+
+        bool first = true;
+        for (auto iter = it.value().begin(); iter != it.value().end(); iter++) {
+            if (iter.value().is_array()) {
+                if (!first)
+                    value_str += array_sep;
+                else
+                    first = false;
+                bool success = parse_str_arr(iter, single_sep, array_sep,escape_string_style, value_str);
+                if (!success)
+                    return false;
+            }
+            else if (iter.value().is_string()) {
+                if (!first)
+                    value_str += single_sep;
+                else
+                    first = false;
+                if (!escape_string_style)
+                    value_str += iter.value();
+                else {
+                    value_str += "\"";
+                    value_str += escape_string_cstyle(iter.value());
+                    value_str += "\"";
+                }
+            }
+            else {
+                //should not happen
+                return false;
+            }
+        }
+        return true;
+        };
+
+    try {
+        boost::nowide::ifstream ifs(file);
+        ifs >> j;
+        ifs.close();
+
+        const ConfigDef* config_def = this->def();
+        if (config_def == nullptr) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": no config defs!";
+            return -1;
+        }
+        //parse the json elements
+        for (auto it = j.begin(); it != j.end(); it++) {
+            if (boost::iequals(it.key(),BBL_JSON_KEY_VERSION)) {
+                key_values.emplace(BBL_JSON_KEY_VERSION, it.value());
+            }
+            else if (boost::iequals(it.key(), BBL_JSON_KEY_IS_CUSTOM)) {
+                //skip it
+            }
+            else if (boost::iequals(it.key(), BBL_JSON_KEY_NAME)) {
+                key_values.emplace(BBL_JSON_KEY_NAME, it.value());
+                if (it.value() == "project_settings")
+                    is_project_settings = true;
+            }
+            else if (boost::iequals(it.key(), BBL_JSON_KEY_URL)) {
+                key_values.emplace(BBL_JSON_KEY_URL, it.value());
+            }
+            else if (boost::iequals(it.key(), BBL_JSON_KEY_TYPE)) {
+                key_values.emplace(BBL_JSON_KEY_TYPE, it.value());
+            }
+            else if (boost::iequals(it.key(), BBL_JSON_KEY_SETTING_ID)) {
+                key_values.emplace(BBL_JSON_KEY_SETTING_ID, it.value());
+            }
+            else if (boost::iequals(it.key(), BBL_JSON_KEY_FILAMENT_ID)) {
+                key_values.emplace(BBL_JSON_KEY_FILAMENT_ID, it.value());
+            }
+            else if (boost::iequals(it.key(), BBL_JSON_KEY_FROM)) {
+                key_values.emplace(BBL_JSON_KEY_FROM, it.value());
+            }
+            else if (boost::iequals(it.key(), BBL_JSON_KEY_DESCRIPTION)) {
+                key_values.emplace(BBL_JSON_KEY_DESCRIPTION, it.value());
+            }
+            else if (boost::iequals(it.key(), BBL_JSON_KEY_INSTANTIATION)) {
+                key_values.emplace(BBL_JSON_KEY_INSTANTIATION, it.value());
+            }
+            else if (!load_inherits_to_config && boost::iequals(it.key(), BBL_JSON_KEY_INHERITS)) {
+                key_values.emplace(BBL_JSON_KEY_INHERITS, it.value());
+            } else if (boost::iequals(it.key(), ORCA_JSON_KEY_RENAMED_FROM)) {
+                key_values.emplace(ORCA_JSON_KEY_RENAMED_FROM, it.value());
+            } else {
+                t_config_option_key opt_key = it.key();
+                std::string value_str;
+
+                if (it.value().is_string()) {
+                    //bool test1 = (it.key() == std::string("end_gcode"));
+                    this->set_deserialize(opt_key, it.value(), substitution_context);
+                    //some logic for special values
+                    if (opt_key == "support_type") {
+                        //std::string new_value = dynamic_cast<ConfigOptionString*>(this->option(opt_key))->value;
+                        if (it.value() == "hybrid(auto)") {
+                            different_settings_append.push_back(opt_key);
+                            different_settings_append.push_back("support_style");
+                            new_support_style = "tree_hybrid";
+                        }
+                    } else if (opt_key == "wall_infill_order") {
+                        //BBS: check wall_infill order to decide if it be different and append to diff_setting_append
+                        if (it.value() == "outer wall/inner wall/infill" || it.value() == "infill/outer wall/inner wall" || it.value() == "inner-outer-inner wall/infill") {
+                            get_wall_sequence = "wall_seq_diff_to_system";
+                        }
+
+                        if (it.value() == "infill/outer wall/inner wall" || it.value() == "infill/inner wall/outer wall") {
+                            different_settings_append.push_back("is_infill_first");
+                            is_infill_first = "true";
+                        }
+                    }
+                }
+                else if (it.value().is_array()) {
+                    t_config_option_key opt_key_src = opt_key;
+                    this->handle_legacy(opt_key, value_str);
+                    if (opt_key.empty()) {
+                        //BBS: record these options
+                        substitution_context.unrecogized_keys.push_back(opt_key_src);
+                        continue;
+                    }
+                    bool valid = true, first = true;
+                    const ConfigOptionDef* optdef = config_def->get(opt_key);
+                    if (optdef == nullptr) {
+                        // If we didn't find an option, look for any other option having this as an alias.
+                        for (const auto& opt : config_def->options) {
+                            for (const t_config_option_key& opt_key2 : opt.second.aliases) {
+                                if (opt_key2 == opt_key) {
+                                    opt_key = opt.first;
+                                    optdef = &opt.second;
+                                    break;
+                                }
+                            }
+                            if (optdef != nullptr)
+                                break;
+                        }
+                    }
+
+                    char single_sep = ',';
+                    char array_sep = '#';  // currenty not used
+                    bool escape_string_type = false;
+                    if (optdef) {
+                        switch (optdef->type)
+                        {
+                        case coStrings:
+                            escape_string_type = true;
+                            single_sep = ';';
+                            break;
+                        case coPointsGroups:
+                            single_sep = '#';
+                            break;
+                        default:
+                            break;
+                        }
+                    }
+
+                    // BBS: we only support 2 depth array
+                    valid = parse_str_arr(it, single_sep, array_sep,escape_string_type, value_str);
+                    if (!valid) {
+                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << file << " error, invalid json array for " << it.key();
+                        break;
+                    }
+                    if (valid)
+                        this->set_deserialize(opt_key, value_str, substitution_context);
+                }
+                else {
+                    //should not happen
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" error, invalid json type for " << it.key();
+                }
+            }
+        }
+        if (!different_settings_append.empty()) {
+            if (!new_support_style.empty()) {
+                ConfigOptionEnum<SupportMaterialStyle>* opt = this->option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true);
+                opt->value = smsTreeHybrid;
+            }
+
+            if (!is_infill_first.empty()) {
+                ConfigOptionBool *opt = this->option<ConfigOptionBool>("is_infill_first", true);
+                opt->value = true;
+            }
+
+            if (is_project_settings) {
+                std::vector<std::string>& different_settings = this->option<ConfigOptionStrings>("different_settings_to_system", true)->values;
+                size_t size = different_settings.size();
+                if (size == 0) {
+                    size = this->option<ConfigOptionStrings>("filament_settings_id")->values.size() + 2;
+                    different_settings.resize(size);
+                }
+
+                std::vector<bool> is_first(size, false);
+                std::vector<std::vector<std::string>> original_diffs(size);
+                for (int index = 0; index < size; index++)
+                {
+                    if (different_settings[index].empty()) {
+                        is_first[index] = true;
+                    }
+                    else {
+                        // remove unneeded key
+                        if (get_wall_sequence.empty()) {
+                            std::string wall_sqe_string = "wall_sequence";
+                            int pos=different_settings[index].find(wall_sqe_string);
+
+                            if (pos != different_settings[index].npos) {
+                                int erase_len = wall_sqe_string.size();
+                                if (pos + erase_len < different_settings[index].size() && different_settings[index][pos + erase_len] == ';')
+                                    erase_len++;
+                                different_settings[index].erase(pos, erase_len);
+                            }
+
+                        }
+
+                        if (different_settings[index].empty()) {
+                            is_first[index] = true;
+                            continue;
+                        }
+
+                        Slic3r::unescape_strings_cstyle(different_settings[index], original_diffs[index]);
+                    }
+                }
+
+                for (auto diff_key : different_settings_append)
+                {
+                    //get the index in the group
+                    int index = 0;
+                    bool need_insert = true;
+                    if (diff_key == "support_type")
+                        index = 0;
+                    else if (diff_key == "support_style")
+                        index = 0;
+                    else if (diff_key == "is_infill_first")
+                        index = 0;
+
+                    //check whether exist firstly
+                    if (!original_diffs[index].empty()) {
+                        for (int j = 0; j < original_diffs[index].size(); j++) {
+                            if (original_diffs[index][j] == diff_key) {
+                                need_insert = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!need_insert)
+                        continue;
+
+                    //insert this key
+                    if (!is_first[index])
+                        different_settings[index] += ";";
+                    else
+                        is_first[index] = false;
+                    different_settings[index] += diff_key;
+                }
+            }
+        }
+        
+        // Do legacy conversion on a completely loaded dictionary.
+        // Perform composite conversions, for example merging multiple keys into one key.
+        this->handle_legacy_composite();
+        return 0;
+    }
+    catch (const std::ifstream::failure &err)  {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" got a ifstream error, reason = " << err.what();
+        reason = std::string("ifstreamError: ") + err.what();
+        //throw ConfigurationError(format("Failed loading configuration file \"%1%\": %2%", file, e.what()));
+    }
+    catch(nlohmann::detail::parse_error &err) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" got a nlohmann::detail::parse_error, reason = " << err.what();
+        reason = std::string("JsonParseError: ") + err.what();
+        //throw ConfigurationError(format("Failed loading configuration file \"%1%\": %2%", file, err.what()));
+    }
+    catch(std::exception &err) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" got a generic exception, reason = " << err.what();
+        reason = std::string("std::exception: ") + err.what();
+    }
+    return -1;
 }
 
 ConfigSubstitutions ConfigBase::load_from_ini(const std::string &file, ForwardCompatibilitySubstitutionRule compatibility_rule)
@@ -855,16 +1187,44 @@ ConfigSubstitutions ConfigBase::load(const boost::property_tree::ptree &tree, Fo
     return std::move(substitutions_ctxt.substitutions);
 }
 
+// BBS
+static bool         is_whitespace(char c) { return c == ' ' || c == '\t'; }
+static bool         is_end_of_line(char c) { return c == '\r' || c == '\n' || c == 0; }
+static bool         is_end_of_gcode_line(char c) { return c == ';' || is_end_of_line(c); }
+static bool         is_end_of_word(char c) { return is_whitespace(c) || is_end_of_gcode_line(c); }
+
+static const char* skip_word(const char* c) {
+    for (; !is_end_of_word(*c); ++c)
+        ; // silence -Wempty-body
+    return c;
+}
+
+static const char* skip_whitespaces(const char* c) {
+    for (; is_whitespace(*c); ++c)
+        ; // silence -Wempty-body
+    return c;
+}
+
 // Load the config keys from the given string.
 size_t ConfigBase::load_from_gcode_string_legacy(ConfigBase& config, const char* str, ConfigSubstitutionContext& substitutions)
 {
     if (str == nullptr)
         return 0;
 
+    // BBS. Remove line numbers.
+    std::regex match_pattern("\nN[0-9]* *");
+    std::string replace_pattern = "\n";
+    char* result = (char*)calloc(strlen(str) + 1, 1);
+    std::regex_replace(result, str, str + strlen(str), match_pattern, replace_pattern);
+
     // Walk line by line in reverse until a non-configuration key appears.
-    const char *data_start = str;
+    const char *data_start = result;
+    data_start = skip_whitespaces(data_start);
+    if (std::toupper(*data_start) == 'N')
+        data_start = skip_word(data_start);
+
     // boost::nowide::ifstream seems to cook the text data somehow, so less then the 64k of characters may be retrieved.
-    const char *end = data_start + strlen(str);
+    const char *end = data_start + strlen(data_start);
     size_t num_key_value_pairs = 0;
     for (;;) {
         // Extract next line.
@@ -914,6 +1274,7 @@ size_t ConfigBase::load_from_gcode_string_legacy(ConfigBase& config, const char*
     // Perform composite conversions, for example merging multiple keys into one key.
     config.handle_legacy_composite();
 
+    free(result);
     return num_key_value_pairs;
 }
 
@@ -944,7 +1305,6 @@ public:
                 m_ifs.seekg(m_file_pos, m_ifs.beg);
                 if (! m_ifs.read(m_block.data(), m_block_len))
                     return false;
-                assert(m_block_len == m_ifs.gcount());
             }
 
             assert(m_block_len > 0);
@@ -984,69 +1344,72 @@ private:
 };
 
 // Load the config keys from the tail of a G-code file.
-ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &filename, ForwardCompatibilitySubstitutionRule compatibility_rule)
+ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, ForwardCompatibilitySubstitutionRule compatibility_rule)
 {
     // Read a 64k block from the end of the G-code.
-    boost::nowide::ifstream ifs(filename, std::ifstream::binary);
-    // Look for Slic3r or PrusaSlicer header.
+	boost::nowide::ifstream ifs(file);
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":  before parse_file %1%") % file.c_str();
+    // Look for Slic3r or OrcaSlicer header.
     // Look for the header across the whole file as the G-code may have been extended at the start by a post-processing script or the user.
-    bool has_delimiters = false;
+    //BBS
+    bool has_delimiters = true;
     {
-        static constexpr const char slic3r_gcode_header[] = "; generated by Slic3r ";
-        static constexpr const char prusaslicer_gcode_header[] = "; generated by PrusaSlicer ";
+        //BBS
+        std::string bambuslicer_gcode_header = "; OrcaSlicer";
+
+        std::string orcaslicer_gcode_header = std::string("; generated by ");
+        orcaslicer_gcode_header += SLIC3R_APP_NAME;
+
         std::string header;
         bool        header_found = false;
         while (std::getline(ifs, header)) {
-            if (strncmp(slic3r_gcode_header, header.c_str(), strlen(slic3r_gcode_header)) == 0) {
-                header_found = true;
-                break;
-            } else if (strncmp(prusaslicer_gcode_header, header.c_str(), strlen(prusaslicer_gcode_header)) == 0) {
-                // Parse PrusaSlicer version.
-                size_t i = strlen(prusaslicer_gcode_header);
-                for (; i < header.size() && header[i] == ' '; ++ i) ;
-                size_t j = i;
-                for (; j < header.size() && header[j] != ' '; ++ j) ;
-                try {
-                    Semver semver(header.substr(i, j - i));
-                    has_delimiters = semver >= Semver(2, 4, 0, nullptr, "alpha0");
-                } catch (const RuntimeError &) {
-                }
+            // BBS
+            const char* line_c = skip_whitespaces(header.c_str());
+            if (std::toupper(*line_c) == 'N')
+                line_c = skip_word(line_c);
+            line_c = skip_whitespaces(line_c);
+            // BBS
+            if (strncmp(bambuslicer_gcode_header.c_str(), line_c, strlen(bambuslicer_gcode_header.c_str())) == 0 ||
+                strncmp(orcaslicer_gcode_header.c_str(), line_c, strlen(orcaslicer_gcode_header.c_str())) == 0) {
                 header_found = true;
                 break;
             }
         }
-        if (! header_found)
-            throw Slic3r::RuntimeError("Not a PrusaSlicer / Slic3r PE generated g-code.");
+        if (!header_found) {
+            std::string error_message = "Not a gcode file generated by ";
+            error_message += SLIC3R_APP_FULL_NAME;
+            error_message += ".";
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << error_message;
+            throw Slic3r::RuntimeError(error_message.c_str());
+        }
     }
 
-    auto                      header_end_pos = ifs.tellg();
     ConfigSubstitutionContext substitutions_ctxt(compatibility_rule);
     size_t                    key_value_pairs = 0;
 
     if (has_delimiters)
     {
-        // PrusaSlicer starting with 2.4.0-alpha0 delimits the config section stored into G-code with 
-        // ; prusaslicer_config = begin
+        //BBS
+        // PrusaSlicer starting with 2.4.0-alpha0 delimits the config section stored into G-code with
+        // ; CONFIG_BLOCK_START
         // ...
-        // ; prusaslicer_config = end
-        // The begin / end tags look like any other key / value pairs on purpose to be compatible with older G-code viewer.
-        // Read the file in reverse line by line.
-        ReverseLineReader reader(ifs, header_end_pos);
-        // Read the G-code file by 64k blocks back to front.
+        // ; CONFIG_BLOCK_END
         bool begin_found = false;
         bool end_found   = false;
         std::string line;
-        while (reader.getline(line))
-            if (line == "; prusaslicer_config = end") {
-                end_found = true;
+        while (std::getline(ifs, line))
+            if (line.rfind("; CONFIG_BLOCK_START",0)==0) {
+                begin_found = true;
                 break;
             }
-        if (! end_found) 
-            throw Slic3r::RuntimeError(format("Configuration block closing tag \"; prusaslicer_config = end\" not found when reading %1%", filename));
+        if (!begin_found) {
+            //BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << format("Configuration block closing tag \"; CONFIG_BLOCK_START\" not found when reading %1%", file);
+            throw Slic3r::RuntimeError(format("Config tag \"; CONFIG_BLOCK_START\" not found"));
+        }
         std::string key, value;
-        while (reader.getline(line)) {
-            if (line == "; prusaslicer_config = begin") {
-                begin_found = true;
+        while (std::getline(ifs, line)) {
+            if (line.rfind("; CONFIG_BLOCK_END",0)==0) {
+                end_found = true;
                 break;
             }
             // line should be a valid key = value pair.
@@ -1064,74 +1427,81 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &filename
                 }
             }
         }
-        if (! begin_found) 
-            throw Slic3r::RuntimeError(format("Configuration block opening tag \"; prusaslicer_config = begin\" not found when reading %1%", filename));
+        if (!end_found) {
+            //BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << format("Configuration block opening tag \"; CONFIG_BLOCK_END\" not found when reading %1%", file);
+            throw Slic3r::RuntimeError(format("Config tag \"; CONFIG_BLOCK_END\" not found"));
+        }
     }
     else
     {
-        // Slic3r or PrusaSlicer older than 2.4.0-alpha0 do not emit any delimiter.
+        auto                      header_end_pos = ifs.tellg();
+        // Slicer older than 2.4.0-alpha0 do not emit any delimiter.
         // Try a heuristics reading the G-code from back.
         ifs.seekg(0, ifs.end);
         auto file_length = ifs.tellg();
-        auto data_length = std::min<std::fstream::pos_type>(65535, file_length - header_end_pos);
-        ifs.seekg(file_length - data_length, ifs.beg);
+    	auto data_length = std::min<std::fstream::pos_type>(65535, file_length - header_end_pos);
+    	ifs.seekg(file_length - data_length, ifs.beg);
         std::vector<char> data(size_t(data_length) + 1, 0);
         ifs.read(data.data(), data_length);
         ifs.close();
         key_value_pairs = load_from_gcode_string_legacy(*this, data.data(), substitutions_ctxt);
     }
 
-    if (key_value_pairs < 80)
-        throw Slic3r::RuntimeError(format("Suspiciously low number of configuration values extracted from %1%: %2%", filename, key_value_pairs));
-
-    // Do legacy conversion on a completely loaded dictionary.
-    // Perform composite conversions, for example merging multiple keys into one key.
-    this->handle_legacy_composite();
-    return std::move(substitutions_ctxt.substitutions);
-}
-
-ConfigSubstitutions ConfigBase::load_from_binary_gcode_file(const std::string& filename, ForwardCompatibilitySubstitutionRule compatibility_rule)
-{
-    ConfigSubstitutionContext substitutions_ctxt(compatibility_rule);
-
-    FilePtr file{ boost::nowide::fopen(filename.c_str(), "rb") };
-    if (file.f == nullptr)
-        throw Slic3r::RuntimeError(format("Error opening file %1%", filename));
-
-    using namespace bgcode::core;
-    using namespace bgcode::binarize;
-    std::vector<std::byte> cs_buffer(65536);
-    EResult res = is_valid_binary_gcode(*file.f, true, cs_buffer.data(), cs_buffer.size());
-    if (res != EResult::Success)
-        throw Slic3r::RuntimeError(format("File %1% does not contain a valid binary gcode\nError: %2%", filename,
-            std::string(translate_result(res))));
-
-    FileHeader file_header;
-    res = read_header(*file.f, file_header, nullptr);
-    if (res != EResult::Success)
-        throw Slic3r::RuntimeError(format("Error while reading file %1%: %2%", filename, std::string(translate_result(res))));
-
-    // searches for config block
-    BlockHeader block_header;
-    res = read_next_block_header(*file.f, file_header, block_header, EBlockType::SlicerMetadata, cs_buffer.data(), cs_buffer.size());
-    if (res != EResult::Success)
-        throw Slic3r::RuntimeError(format("Error while reading file %1%: %2%", filename, std::string(translate_result(res))));
-    if ((EBlockType)block_header.type != EBlockType::SlicerMetadata)
-        throw Slic3r::RuntimeError(format("Unable to find slicer metadata block in file %1%", filename));
-    SlicerMetadataBlock slicer_metadata_block;
-    res = slicer_metadata_block.read_data(*file.f, file_header, block_header);
-    if (res != EResult::Success)
-        throw Slic3r::RuntimeError(format("Error while reading file %1%: %2%", filename, std::string(translate_result(res))));
-
-    // extracts data from block
-    for (const auto& [key, value] : slicer_metadata_block.raw_data) {
-        this->set_deserialize(key, value, substitutions_ctxt);
+    if (key_value_pairs < 80) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << format("Suspiciously low number of configuration values extracted from %1%: %2%", file, key_value_pairs);
+        throw Slic3r::RuntimeError(format("Suspiciously low number of configuration values extracted from %1%: %2%", file, key_value_pairs));
     }
 
     // Do legacy conversion on a completely loaded dictionary.
     // Perform composite conversions, for example merging multiple keys into one key.
     this->handle_legacy_composite();
+
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":  finished to parse_file %1%") % file.c_str();
     return std::move(substitutions_ctxt.substitutions);
+}
+
+//BBS: add json support
+void ConfigBase::save_to_json(const std::string &file, const std::string &name, const std::string &from, const std::string &version) const
+{
+    json j;
+    //record the headers
+    j[BBL_JSON_KEY_VERSION] = version;
+    j[BBL_JSON_KEY_NAME] = name;
+    j[BBL_JSON_KEY_FROM] = from;
+
+    //record all the key-values
+    for (const std::string &opt_key : this->keys())
+    {
+        const ConfigOption* opt = this->option(opt_key);
+        if ( opt->is_scalar() ) {
+            if (opt->type() == coString && (opt_key != "bed_custom_texture" && opt_key != "bed_custom_model"))
+                //keep \n, \r, \t
+                j[opt_key] = (dynamic_cast<const ConfigOptionString *>(opt))->value;
+            else
+                j[opt_key] = opt->serialize();
+        }
+        else {
+            const ConfigOptionVectorBase* vec = static_cast<const ConfigOptionVectorBase*>(opt);
+            //if (!vec->empty())
+            std::vector<std::string> string_values = vec->vserialize();
+
+            /*for (int i = 0; i < string_values.size(); i++)
+            {
+            std::string string_value = escape_string_cstyle(string_values[i]);
+            j[opt_key][i] = string_value;
+            }*/
+
+            json j_array(string_values);
+            j[opt_key] = j_array;
+        }
+    }
+
+    boost::nowide::ofstream c;
+    c.open(file, std::ios::out | std::ios::trunc);
+    c << j.dump(1, '\t') << std::endl;
+    c.close();
+
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" <<__LINE__ << boost::format(", saved config to %1%\n")%file;
 }
 
 void ConfigBase::save(const std::string &file) const
@@ -1142,6 +1512,8 @@ void ConfigBase::save(const std::string &file) const
     for (const std::string &opt_key : this->keys())
         c << opt_key << " = " << this->opt_serialize(opt_key) << std::endl;
     c.close();
+
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" <<__LINE__ << boost::format(", saved config to %1%\n")%file;
 }
 
 // Set all the nullable values to nils.
@@ -1223,7 +1595,7 @@ bool DynamicConfig::read_cli(int argc, const char* const argv[], t_config_option
     for (const auto &oit : this->def()->options)
         for (const std::string &t : oit.second.cli_args(oit.first))
             opts[t] = oit.first;
-    
+
     bool parse_options = true;
     for (int i = 1; i < argc; ++ i) {
         std::string token = argv[i];
@@ -1258,7 +1630,10 @@ bool DynamicConfig::read_cli(int argc, const char* const argv[], t_config_option
         auto it = opts.find(token);
         bool no = false;
         if (it == opts.end()) {
-            // Remove the "no-" prefix used to negate boolean options.
+            //BBS: don't use 'no-' for boolean options
+            boost::nowide::cerr << "Invalid option --" << token.c_str() << std::endl;
+            return false;
+            /* Remove the "no-" prefix used to negate boolean options.
             std::string yes_token;
             if (boost::starts_with(token, "no-")) {
                 yes_token = token.substr(3);
@@ -1266,33 +1641,33 @@ bool DynamicConfig::read_cli(int argc, const char* const argv[], t_config_option
                 no = true;
             }
             if (it == opts.end()) {
-                boost::nowide::cerr << "Unknown option --" << token.c_str() << std::endl;
+                boost::nowide::cerr << "Invalid option --" << token.c_str() << std::endl;
                 return false;
             }
             if (no)
-                token = yes_token;
+                token = yes_token;*/
         }
 
         const t_config_option_key &opt_key = it->second;
-        const ConfigOptionDef     &optdef  = *this->option_def(opt_key);
+        const ConfigOptionDef     &optdef  = this->def()->options.at(opt_key);
 
         // If the option type expects a value and it was not already provided,
         // look for it in the next token.
         if (value.empty() && optdef.type != coBool && optdef.type != coBools) {
             if (i == argc-1) {
-                boost::nowide::cerr << "No value supplied for --" << token.c_str() << std::endl;
+                boost::nowide::cerr << "Need values for option --" << token.c_str() << std::endl;
                 return false;
             }
             value = argv[++ i];
         }
 
-        if (no) {
+        /*if (no) {
             assert(optdef.type == coBool || optdef.type == coBools);
             if (! value.empty()) {
                 boost::nowide::cerr << "Boolean options negated by the --no- prefix cannot have a value." << std::endl;
                 return false;
             }
-        }
+        }*/
 
         // Store the option value.
         const bool               existing   = this->has(opt_key);
@@ -1329,7 +1704,7 @@ bool DynamicConfig::read_cli(int argc, const char* const argv[], t_config_option
             ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Disable);
             // Any scalar value of a type different from Bool and String.
             if (! this->set_deserialize_nothrow(opt_key, value, context, false)) {
-				boost::nowide::cerr << "Invalid value supplied for --" << token.c_str() << std::endl;
+				boost::nowide::cerr << "Invalid value for option --" << token.c_str() << std::endl;
 				return false;
 			}
         }
@@ -1346,6 +1721,81 @@ t_config_option_keys DynamicConfig::keys() const
     return keys;
 }
 
+DynamicConfig::DynamicConfigDifference DynamicConfig::diff_report(const DynamicConfig& rhs) const {
+    DynamicConfig::DynamicConfigDifference result;
+
+    std::set<t_config_option_key> all_keys;
+
+    for (const auto& kvp : this->options) {
+	all_keys.insert(kvp.first);
+    }
+    for (const auto& kvp : rhs.options) {
+	all_keys.insert(kvp.first);
+    }
+
+    for (const auto& key : all_keys) {
+	auto left_it = this->options.find(key);
+	auto right_it = rhs.options.find(key);
+
+	bool left_has = (left_it != this->options.end());
+	bool right_has = (right_it != rhs.options.end());
+
+	if (left_has && right_has) {
+	    if (*left_it->second != *right_it->second) {
+		result.differences[key] = {
+		    left_it->second->serialize(),
+		    right_it->second->serialize()
+		};
+	    }
+	} else if (left_has) {
+	    result.differences[key] = {
+		left_it->second->serialize(),
+		std::nullopt
+	    };
+	} else if (right_has) {
+	    result.differences[key] = {
+		std::nullopt,
+		right_it->second->serialize()
+	    };
+	}
+    }
+    return result;
+}
+
+std::ostream& operator<<(std::ostream& os, const DynamicConfig::DynamicConfigDifference& diff) {
+    if (!diff.is_different()) {
+        os << "Configurations are identical.\n";
+        return os;
+    }
+
+    int missing_right=0, missing_left=0, differ=0;
+    os << "DynamicConfig Differences Found (" << diff.differences.size() << " keys):\n";
+    for (const auto& kvp : diff.differences) {
+        const auto& key = kvp.first;
+        const auto& detail = kvp.second;
+
+        os << "  Key: **" << key << "**\n";
+
+        if (detail.is_missing_key()) {
+            // Determine which side is missing the key
+            if (detail.left_value.has_value()) {
+                os << "    - **Missing in Right**: Key exists in left config. Value: " << detail.left_value.value() << "\n";
+		missing_right++;
+            } else {
+                os << "    - **Missing in Left**: Key exists in right config. Value: " << detail.right_value.value() << "\n";
+		missing_left++;
+            }
+        } else if (detail.is_different_value()) {
+	    differ++;
+            os << "    - **Value Differs**:\n";
+            os << "      -> Left Value:  " << detail.left_value.value() << "\n";
+            os << "      -> Right Value: " << detail.right_value.value() << "\n";
+        }
+    }
+    os << "Summary: " << missing_right << " missing on right, " << missing_left << " missing on left, and " << differ << " have differing values\n";
+    return os;
+}
+
 void StaticConfig::set_defaults()
 {
     // use defaults from definition
@@ -1360,20 +1810,21 @@ void StaticConfig::set_defaults()
     }
 }
 
-t_config_option_keys StaticConfig::keys() const 
+t_config_option_keys StaticConfig::keys() const
 {
     t_config_option_keys keys;
     assert(this->def() != nullptr);
     for (const auto &opt_def : this->def()->options)
-        if (this->option(opt_def.first) != nullptr) 
+        if (this->option(opt_def.first) != nullptr)
             keys.push_back(opt_def.first);
     return keys;
 }
 
 // Iterate over the pairs of options with equal keys, call the fn.
 // Returns true on early exit by fn().
+//BBS: add skipped key logic
 template<typename Fn>
-static inline bool dynamic_config_iterate(const DynamicConfig &lhs, const DynamicConfig &rhs, Fn fn)
+static inline bool dynamic_config_iterate(const DynamicConfig &lhs, const DynamicConfig &rhs, Fn fn, const std::set<std::string>* skipped_keys = nullptr)
 {
     std::map<t_config_option_key, std::unique_ptr<ConfigOption>>::const_iterator i = lhs.cbegin();
     std::map<t_config_option_key, std::unique_ptr<ConfigOption>>::const_iterator j = rhs.cbegin();
@@ -1384,7 +1835,11 @@ static inline bool dynamic_config_iterate(const DynamicConfig &lhs, const Dynami
             ++ j;
         else {
             assert(i->first == j->first);
-            if (fn(i->first, i->second.get(), j->second.get()))
+            if (skipped_keys && (skipped_keys->count(i->first) != 0))
+            {
+                //do nothing
+            }
+            else if (fn(i->first, i->second.get(), j->second.get()))
                 // Early exit by fn.
                 return true;
             ++ i;
@@ -1395,22 +1850,24 @@ static inline bool dynamic_config_iterate(const DynamicConfig &lhs, const Dynami
 }
 
 // Are the two configs equal? Ignoring options not present in both configs.
-bool DynamicConfig::equals(const DynamicConfig &other) const
-{ 
-    return ! dynamic_config_iterate(*this, other, 
-        [](const t_config_option_key & /* key */, const ConfigOption *l, const ConfigOption *r) { return *l != *r; });
+//BBS: add skipped keys logic
+bool DynamicConfig::equals(const DynamicConfig &other, const std::set<std::string>* skipped_keys) const
+{
+    return ! dynamic_config_iterate(*this, other,
+        [](const t_config_option_key & /* key */, const ConfigOption *l, const ConfigOption *r) { return *l != *r; },
+        skipped_keys);
 }
 
 // Returns options differing in the two configs, ignoring options not present in both configs.
 t_config_option_keys DynamicConfig::diff(const DynamicConfig &other) const
 {
     t_config_option_keys diff;
-    dynamic_config_iterate(*this, other, 
+    dynamic_config_iterate(*this, other,
         [&diff](const t_config_option_key &key, const ConfigOption *l, const ConfigOption *r) {
             if (*l != *r)
                 diff.emplace_back(key);
             // Continue iterating.
-            return false; 
+            return false;
         });
     return diff;
 }
@@ -1419,7 +1876,7 @@ t_config_option_keys DynamicConfig::diff(const DynamicConfig &other) const
 t_config_option_keys DynamicConfig::equal(const DynamicConfig &other) const
 {
     t_config_option_keys equal;
-    dynamic_config_iterate(*this, other, 
+    dynamic_config_iterate(*this, other,
         [&equal](const t_config_option_key &key, const ConfigOption *l, const ConfigOption *r) {
             if (*l == *r)
                 equal.emplace_back(key);
@@ -1439,9 +1896,6 @@ CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionSingle<std::string>)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionSingle<Slic3r::Vec2d>)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionSingle<Slic3r::Vec3d>)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionSingle<bool>)
-CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionSingleNullable<double>)
-CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionSingleNullable<int>)
-CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionSingleNullable<bool>)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionVectorBase)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionVector<double>)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionVector<int>)
@@ -1449,11 +1903,9 @@ CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionVector<std::string>)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionVector<Slic3r::Vec2d>)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionVector<unsigned char>)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionFloat)
-CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionFloatNullable)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionFloats)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionFloatsNullable)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionInt)
-CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionIntNullable)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionInts)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionIntsNullable)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionString)
@@ -1471,31 +1923,25 @@ CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionBool)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionBools)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionBoolsNullable)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionEnumGeneric)
-CEREAL_REGISTER_TYPE(Slic3r::ConfigOptionEnumsGeneric)
 CEREAL_REGISTER_TYPE(Slic3r::ConfigBase)
 CEREAL_REGISTER_TYPE(Slic3r::DynamicConfig)
 
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<double>) 
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<int>) 
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<std::string>) 
+CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<double>)
+CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<int>)
+CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<std::string>)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<Slic3r::Vec2d>)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<Slic3r::Vec3d>)
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<bool>) 
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingleNullable<double>)
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingleNullable<int>)
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingleNullable<bool>)
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionVectorBase) 
+CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionSingle<bool>)
+CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOption, Slic3r::ConfigOptionVectorBase)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVectorBase, Slic3r::ConfigOptionVector<double>)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVectorBase, Slic3r::ConfigOptionVector<int>)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVectorBase, Slic3r::ConfigOptionVector<std::string>)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVectorBase, Slic3r::ConfigOptionVector<Slic3r::Vec2d>)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVectorBase, Slic3r::ConfigOptionVector<unsigned char>)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionSingle<double>, Slic3r::ConfigOptionFloat)
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionSingleNullable<double>, Slic3r::ConfigOptionFloatNullable)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVector<double>, Slic3r::ConfigOptionFloats)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVector<double>, Slic3r::ConfigOptionFloatsNullable)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionSingle<int>, Slic3r::ConfigOptionInt)
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionSingleNullable<int>, Slic3r::ConfigOptionIntNullable)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVector<int>, Slic3r::ConfigOptionInts)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVector<int>, Slic3r::ConfigOptionIntsNullable)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionSingle<std::string>, Slic3r::ConfigOptionString)
@@ -1513,5 +1959,4 @@ CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionSingle<bool>, Slic3r::C
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVector<unsigned char>, Slic3r::ConfigOptionBools)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionVector<unsigned char>, Slic3r::ConfigOptionBoolsNullable)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionInt, Slic3r::ConfigOptionEnumGeneric)
-CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigOptionInts, Slic3r::ConfigOptionEnumsGeneric)
 CEREAL_REGISTER_POLYMORPHIC_RELATION(Slic3r::ConfigBase, Slic3r::DynamicConfig)

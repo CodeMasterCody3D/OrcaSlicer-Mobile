@@ -12,6 +12,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import ru.ytkab0bp.slicebeam.BuildConfig;
 import ru.ytkab0bp.slicebeam.config.ConfigObject;
@@ -51,7 +52,7 @@ public class Slic3rConfigWrapper {
             "ooze_prevention", "standby_temperature_delta", "interface_shells", "extrusion_width", "first_layer_extrusion_width",
             "perimeter_extrusion_width", "external_perimeter_extrusion_width", "infill_extrusion_width", "solid_infill_extrusion_width",
             "top_infill_extrusion_width", "support_material_extrusion_width", "infill_overlap", "infill_anchor", "infill_anchor_max", "bridge_flow_ratio",
-            "elefant_foot_compensation", "xy_size_compensation", "resolution", "gcode_resolution", "arc_fitting",
+            "elefant_foot_compensation", "xy_size_compensation", "resolution", "gcode_resolution",
             "wipe_tower", "wipe_tower_x", "wipe_tower_y",
             "wipe_tower_width", "wipe_tower_cone_angle", "wipe_tower_rotation_angle", "wipe_tower_brim_width", "wipe_tower_bridging", "single_extruder_multi_material_priming", "mmu_segmented_region_max_width",
             "mmu_segmented_region_interlocking_depth", "wipe_tower_extruder", "wipe_tower_no_sparse_layers", "wipe_tower_extra_flow", "wipe_tower_extra_spacing", "compatible_printers", "compatible_printers_condition", "inherits",
@@ -95,7 +96,14 @@ public class Slic3rConfigWrapper {
             "machine_max_acceleration_x", "machine_max_acceleration_y", "machine_max_acceleration_z", "machine_max_acceleration_e",
             "machine_max_feedrate_x", "machine_max_feedrate_y", "machine_max_feedrate_z", "machine_max_feedrate_e",
             "machine_min_extruding_rate", "machine_min_travel_rate",
-            "machine_max_jerk_x", "machine_max_jerk_y", "machine_max_jerk_z", "machine_max_jerk_e"
+            "machine_max_jerk_x", "machine_max_jerk_y", "machine_max_jerk_z", "machine_max_jerk_e",
+            // Extruder block (per-extruder vectors). Legacy names where one exists (KEY_MIGRATION
+            // renames them on storage), OrcaSlicer names for options with no legacy equivalent.
+            "nozzle_diameter", "min_layer_height", "max_layer_height", "extruder_offset", "extruder_colour",
+            "retract_length", "retract_lift", "retract_lift_above", "retract_lift_below", "retract_lift_enforce",
+            "z_hop_types", "travel_slope", "retract_speed", "deretract_speed", "retract_before_travel",
+            "retract_layer_change", "wipe", "wipe_distance", "retract_before_wipe", "retract_restart_extra",
+            "retract_length_toolchange", "retract_restart_extra_toolchange", "default_filament_profile"
     );
     public final static List<String> PHYSICAL_PRINTER_CONFIG_KEYS = Arrays.asList(
             "preset_name", // temporary option to compatibility with older Slicer
@@ -149,7 +157,7 @@ public class Slic3rConfigWrapper {
 
     public void importInto(List<ConfigObject> list, ConfigObject obj) {
         for (ConfigObject o : list) {
-            if (o.getTitle().equals(obj.getTitle())) {
+            if (Objects.equals(o.getTitle(), obj.getTitle())) {
                 o.values.clear();
                 o.values.putAll(obj.values);
                 return;
@@ -160,7 +168,7 @@ public class Slic3rConfigWrapper {
 
     public ConfigObject findFilament(String key) {
         for (ConfigObject obj : filamentConfigs) {
-            if (key.equals(obj.getTitle())) {
+            if (Objects.equals(key, obj.getTitle())) {
                 return obj;
             }
         }
@@ -169,7 +177,7 @@ public class Slic3rConfigWrapper {
 
     public ConfigObject findPrinterVariant(String model, String variant) {
         for (ConfigObject obj : printerConfigs) {
-            if (model.equals(obj.get("printer_model")) && variant.equals(obj.get("printer_variant"))) {
+            if (Objects.equals(model, obj.get("printer_model")) && Objects.equals(variant, obj.get("printer_variant"))) {
                 return obj;
             }
         }
@@ -178,7 +186,7 @@ public class Slic3rConfigWrapper {
 
     public ConfigObject findPrint(String key) {
         for (ConfigObject obj : printConfigs) {
-            if (key.equals(obj.getTitle())) {
+            if (Objects.equals(key, obj.getTitle())) {
                 return obj;
             }
         }
@@ -187,7 +195,7 @@ public class Slic3rConfigWrapper {
 
     public ConfigObject findPrinter(String key) {
         for (ConfigObject obj : printerConfigs) {
-            if (key.equals(obj.getTitle())) {
+            if (Objects.equals(key, obj.getTitle())) {
                 return obj;
             }
         }
@@ -199,7 +207,8 @@ public class Slic3rConfigWrapper {
             sb.append("[").append(key).append(":").append(cfg.getTitle()).append("]\n");
 
             for (Map.Entry<String, String> en : cfg.values.entrySet()) {
-                sb.append(en.getKey()).append(" = ").append(en.getValue().replace("\n", "\\n")).append("\n");
+                String value = ConfigObject.normalizeSerializedValue(en.getKey(), en.getValue());
+                sb.append(en.getKey()).append(" = ").append(value.replace("\n", "\\n")).append("\n");
             }
             sb.append("\n");
         }
@@ -299,6 +308,12 @@ public class Slic3rConfigWrapper {
                 String key = line.substring(0, i);
                 String value = line.substring(i + 3).trim().replace("\\n", "\n");
 
+                if (key.equals("arc_fitting")) {
+                    continue;
+                }
+                if (value.equals("crosshatch")) {
+                    value = "grid";
+                }
                 if (key.equals("ironing_type") && value.equals("no ironing")) {
                     value = "top";
                 }
@@ -325,22 +340,25 @@ public class Slic3rConfigWrapper {
                         currentFilamentConfig.setTitle(value);
                     }
 
-                    if (PRINT_CONFIG_KEYS.contains(key)) {
+                    // The *_CONFIG_KEYS sets are keyed by legacy names; legacyKey() lets an
+                    // already-migrated key (from a config we serialized) still be categorized.
+                    String legacyKey = ConfigObject.legacyKey(key);
+                    if (PRINT_CONFIG_KEYS.contains(key) || PRINT_CONFIG_KEYS.contains(legacyKey)) {
                         if (currentPrintConfig == null)
                             currentPrintConfig = new ConfigObject();
                         currentPrintConfig.put(key, value);
                     }
-                    if (FILAMENT_CONFIG_KEYS.contains(key)) {
+                    if (FILAMENT_CONFIG_KEYS.contains(key) || FILAMENT_CONFIG_KEYS.contains(legacyKey)) {
                         if (currentFilamentConfig == null)
                             currentFilamentConfig = new ConfigObject();
                         currentFilamentConfig.put(key, value);
                     }
-                    if (PRINTER_CONFIG_KEYS.contains(key)) {
+                    if (PRINTER_CONFIG_KEYS.contains(key) || PRINTER_CONFIG_KEYS.contains(legacyKey)) {
                         if (currentPrinterConfig == null)
                             currentPrinterConfig = new ConfigObject();
                         currentPrinterConfig.put(key, value);
                     }
-                    if (PHYSICAL_PRINTER_CONFIG_KEYS.contains(key)) {
+                    if (PHYSICAL_PRINTER_CONFIG_KEYS.contains(key) || PHYSICAL_PRINTER_CONFIG_KEYS.contains(legacyKey)) {
                         if (currentPhysicalPrinterConfig == null)
                             currentPhysicalPrinterConfig = new ConfigObject();
                         currentPhysicalPrinterConfig.put(key, value);

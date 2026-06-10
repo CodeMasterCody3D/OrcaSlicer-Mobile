@@ -91,6 +91,25 @@ public:
     //
     void toggle_top_layer_only_view_range();
     //
+    // Get/Set infill visibility depth.
+    // If >= 0, only infill/support layers within depth from the top are rendered.
+    // -1 means no depth limit.
+    //
+    int get_infill_visibility_depth() const;
+    void set_infill_visibility_depth(int depth);
+    //
+    // Get/Set fast mode.
+    // In fast mode, only outer perimeters and critical parts are rendered.
+    //
+    bool is_fast_mode() const;
+    void set_fast_mode(bool fast_mode);
+    //
+    // Get/Set selected object id.
+    // If >= 0, only this object is rendered in full detail.
+    //
+    int get_selected_object_id() const;
+    void set_selected_object_id(int id);
+    //
     // Returns true if the given option is visible.
     //
     bool is_option_visible(EOptionType type) const;

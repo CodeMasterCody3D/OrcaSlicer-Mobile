@@ -1,0 +1,14 @@
+allprojects {
+    plugins.withId('com.android.application') {
+        tasks.register("printClasspath") {
+            doLast {
+                def compileTask = tasks.findByName("compileDebugJavaWithJavac")
+                if (compileTask != null) {
+                    compileTask.classpath.each {
+                        println "CLASSPATH_ENTRY:" + it.absolutePath
+                    }
+                }
+            }
+        }
+    }
+}

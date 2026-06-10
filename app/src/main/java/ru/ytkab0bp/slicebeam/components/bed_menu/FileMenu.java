@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.provider.MediaStore;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -165,6 +166,7 @@ public class FileMenu extends ListBedMenu {
                         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                         i.addCategory(Intent.CATEGORY_OPENABLE);
                         i.setType("*/*");
+                        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream", "text/plain"});
                         act.startActivityForResult(i, MainActivity.REQUEST_CODE_IMPORT_PROFILES);
                     }
                 }),
@@ -425,6 +427,25 @@ public class FileMenu extends ListBedMenu {
             return (int) (portrait ? into.getHeight() * 0.35f : into.getWidth() * 0.6f);
         }
 
+        /** Synchronously load a bundled placeholder model from assets/models/<key>.stl onto the bed. */
+        private void ensurePlaceholderModel(String key) {
+            try {
+                File f = new File(SliceBeam.getModelCacheDir(), "calibration_" + key + ".stl");
+                InputStream in = SliceBeam.INSTANCE.getAssets().open("models/" + key + ".stl");
+                FileOutputStream fos = new FileOutputStream(f);
+                byte[] buffer = new byte[10240]; int c;
+                while ((c = in.read(buffer)) != -1) {
+                    fos.write(buffer, 0, c);
+                }
+                fos.close();
+                in.close();
+                FileMenu.this.fragment.loadModel(f);
+                SliceBeam.EVENT_BUS.fireEvent(new ObjectsListChangedEvent());
+            } catch (Exception e) {
+                Log.e("FileMenu", "Failed to load PA placeholder model", e);
+            }
+        }
+
         private String loadJSLoader(String key) {
             try {
                 InputStream in = SliceBeam.INSTANCE.getAssets().open("js_loader/" + key + ".js");
@@ -508,15 +529,23 @@ public class FileMenu extends ListBedMenu {
             RecyclerView rv = new FadeRecyclerView(ctx);
             SimpleRecyclerAdapter adapter = new SimpleRecyclerAdapter();
             adapter.setItems(Arrays.asList(
-                    new PreferenceItem().setIcon(R.drawable.menu_calibrate_la_28).setTitle(ctx.getString(R.string.MenuFileCalibrationsLA)).setSubtitle(ctx.getString(R.string.MenuFileCalibrationsLADescription)).setOnClickListener(v -> {
-                        if (ctx instanceof MainActivity) {
-                            ((MainActivity) ctx).showUnfoldMenu(new WebViewMenu(Uri.parse("https://k3d.tech/calibrations/la/calibrator/").buildUpon().appendQueryParameter("lang", getK3DLanguage()).build(), loadJSLoader("k3d_la")).setFragment(fragment), v);
+                    // K3D (Prusa/SliceBeam) web calibrators removed in favor of OrcaSlicer's calibrations.
+                    new PreferenceItem().setIcon(R.drawable.menu_calibrate_la_28).setTitle("Pressure Advance").setSubtitle("OrcaSlicer PA line test — slices a PA pattern").setOnClickListener(v -> {
+                        SliceBeam.PENDING_CALIB_MODE = 1; // CalibMode::Calib_PA_Line
+                        SliceBeam.PENDING_CALIB_START = 0;
+                        SliceBeam.PENDING_CALIB_END = 0.1;
+                        SliceBeam.PENDING_CALIB_STEP = 0.002;
+                        // The PA line generates its own gcode pattern (GCode.cpp), but the engine still
+                        // needs at least one object on the bed to pass validation. If the bed is empty,
+                        // drop in a tiny placeholder; its geometry is never printed (engine skips normal
+                        // object printing in Calib_PA_Line mode).
+                        boolean hasModel = FileMenu.this.fragment.getGlView().getRenderer().getModel() != null;
+                        if (!hasModel) {
+                            ensurePlaceholderModel("pa_test");
                         }
-                    }),
-                    new PreferenceItem().setIcon(R.drawable.menu_calibrate_retract_28).setTitle(ctx.getString(R.string.MenuFileCalibrationsRetract)).setSubtitle(ctx.getString(R.string.MenuFileCalibrationsRetractDescription)).setOnClickListener(v -> {
-                        if (ctx instanceof MainActivity) {
-                            ((MainActivity) ctx).showUnfoldMenu(new WebViewMenu(Uri.parse("https://k3d.tech/calibrations/retractions/calibrator/").buildUpon().appendQueryParameter("lang", getK3DLanguage()).build(), loadJSLoader("k3d_rct")).setFragment(fragment), v);
-                        }
+                        Toast.makeText(ctx, "Pressure Advance armed — go to the Slice tab", Toast.LENGTH_LONG).show();
+                        SliceBeam.EVENT_BUS.fireEvent(new NeedDismissCalibrationsMenu());
+                        dismiss(true);
                     }),
                     new PreferenceItem().setIcon(R.drawable.deployed_code_24).setTitle(ctx.getString(R.string.MenuFileCalibrationsModels)).setSubtitle(ctx.getString(R.string.MenuFileCalibrationsModelsDescription)).setOnClickListener(v -> {
                         if (ctx instanceof MainActivity) {
@@ -577,10 +606,10 @@ public class FileMenu extends ListBedMenu {
         private void loadModel(String key) {
             BedFragment fragment = this.fragment;
             ViewUtils.postOnMainThread(() -> {
-                File f = new File(SliceBeam.getModelCacheDir(), "calibration_" + key + ".stl");
+                File f = new File(SliceBeam.getModelCacheDir(), "handy_model_" + key);
                 new Thread(()->{
                     try {
-                        InputStream in = SliceBeam.INSTANCE.getAssets().open("models/" + key + ".stl");
+                        InputStream in = SliceBeam.INSTANCE.getAssets().open("models/" + key);
                         FileOutputStream fos = new FileOutputStream(f);
                         byte[] buffer = new byte[10240]; int c;
                         while ((c = in.read(buffer)) != -1) {
@@ -600,6 +629,7 @@ public class FileMenu extends ListBedMenu {
                                 SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(R.string.MenuFileOpenFileLoaded));
                             } catch (Slic3rRuntimeError e) {
                                 f.delete();
+                                android.util.Log.e("SliceBeam", "Slic3r error: ", e);
 
                                 ViewUtils.postOnMainThread(() -> new BeamAlertDialogBuilder(fragment.getContext())
                                         .setTitle(R.string.MenuFileOpenFileFailed)
@@ -654,15 +684,17 @@ public class FileMenu extends ListBedMenu {
             RecyclerView rv = new FadeRecyclerView(ctx);
             SimpleRecyclerAdapter adapter = new SimpleRecyclerAdapter();
             adapter.setItems(Arrays.asList(
-                    new PreferenceItem().setIcon(R.drawable.model_3dbenchy).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModels3DBenchy)).setOnClickListener(v -> loadModel("3dbenchy")),
-                    new PreferenceItem().setIcon(R.drawable.model_xyz_cube).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModelsXYZCube)).setOnClickListener(v -> loadModel("xyz_cube")),
-                    new PreferenceItem().setIcon(R.drawable.model_bunny).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModelsBunny)).setOnClickListener(v -> loadModel("bunny")),
-                    new PreferenceItem().setIcon(R.drawable.model_fox).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModelsFox)).setOnClickListener(v -> loadModel("fox")),
-                    new PreferenceItem().setIcon(R.drawable.model_box).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModelsBox)).setOnClickListener(v -> loadModel("box")),
-                    new PreferenceItem().setIcon(R.drawable.model_cone).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModelsCone)).setOnClickListener(v -> loadModel("cone")),
-                    new PreferenceItem().setIcon(R.drawable.model_cylinder).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModelsCylinder)).setOnClickListener(v -> loadModel("cylinder")),
-                    new PreferenceItem().setIcon(R.drawable.model_pyramid).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModelsPyramid)).setOnClickListener(v -> loadModel("pyramid")),
-                    new PreferenceItem().setIcon(R.drawable.model_sphere).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModelsSphere)).setOnClickListener(v -> loadModel("sphere"))
+                    new PreferenceItem().setIcon(R.drawable.model_thumb_orcacube_v2).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle("Orca Cube").setOnClickListener(v -> {
+                        loadModel("OrcaCube_v2.stl");
+                        loadModel("OrcaPlug_v2.stl");
+                    }),
+                    new PreferenceItem().setIcon(R.drawable.model_thumb_orcatolerancetest).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle("Orca Tolerance Test").setOnClickListener(v -> loadModel("OrcaToleranceTest.stl")),
+                    new PreferenceItem().setIcon(R.drawable.model_thumb_3dbenchy).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle(ctx.getString(R.string.MenuFileCalibrationsModels3DBenchy)).setOnClickListener(v -> loadModel("3dbenchy.stl")),
+                    new PreferenceItem().setIcon(R.drawable.model_thumb_calicat).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle("Cali Cat").setOnClickListener(v -> loadModel("calicat.stl")),
+                    new PreferenceItem().setIcon(R.drawable.model_thumb_ksr_fdmtest_v4).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle("Autodesk FDM Test").setOnClickListener(v -> loadModel("ksr_fdmtest_v4.stl")),
+                    new PreferenceItem().setIcon(R.drawable.model_thumb_voron_design_cube_v7).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle("Voron Cube").setOnClickListener(v -> loadModel("Voron_Design_Cube_v7.stl")),
+                    new PreferenceItem().setIcon(R.drawable.model_thumb_stanford_bunny).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle("Stanford Bunny").setOnClickListener(v -> loadModel("Stanford_Bunny.stl")),
+                    new PreferenceItem().setIcon(R.drawable.model_thumb_orca_stringhell).setNoTint(true).setRoundRadius(ViewUtils.dp(8)).setTitle("Orca String Hell").setOnClickListener(v -> loadModel("Orca_stringhell.stl"))
             ));
             rv.setAdapter(adapter);
             ll.addView(rv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));

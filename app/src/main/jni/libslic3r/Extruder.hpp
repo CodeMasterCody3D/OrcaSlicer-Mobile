@@ -1,12 +1,3 @@
-///|/ Copyright (c) Prusa Research 2017 - 2023 Vojtěch Bubník @bubnikv, Lukáš Matěna @lukasmatena
-///|/ Copyright (c) 2017 Joseph Lenox @lordofhyphens
-///|/ Copyright (c) Slic3r 2014 - 2015 Alessandro Ranellucci @alranel
-///|/
-///|/ ported from lib/Slic3r/Extruder.pm:
-///|/ Copyright (c) Slic3r 2011 - 2014 Alessandro Ranellucci @alranel
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_Extruder_hpp_
 #define slic3r_Extruder_hpp_
 
@@ -20,32 +11,39 @@ class GCodeConfig;
 class Extruder
 {
 public:
-    Extruder(unsigned int id, GCodeConfig *config);
-    ~Extruder() = default;
+    Extruder(unsigned int id, GCodeConfig *config, bool share_extruder);
+    virtual ~Extruder() {}
+
+    void   reset() {
+        // BBS
+        if (m_share_extruder) {
+            m_share_E = std::vector<double>(MAXIMUM_EXTRUDER_NUMBER, 0);
+            m_share_retracted = std::vector<double>(MAXIMUM_EXTRUDER_NUMBER, 0);
+        } else {
+            m_E             = 0;
+            m_retracted     = 0;
+        }
+        m_restart_extra = 0;
+        m_absolute_E    = 0;
+    }
 
     unsigned int id() const { return m_id; }
 
-    // Following three methods emit:
-    // first  - extrusion delta
-    // second - number to emit to G-code: This may be delta for relative mode or a distance from last reset_E() for absolute mode.
-    // They also quantize the E axis to G-code resolution.
-    std::pair<double, double> extrude(double dE);
-    std::pair<double, double> retract(double retract_length, double restart_extra);
-    std::pair<double, double> unretract();
-    // How much to retract yet before retract_length is reached?
-    // The value is quantized to G-code resolution.
-    double                    retract_to_go(double retract_length) const;
-
-    // Reset the current state of the E axis (this is only needed for relative extruder addressing mode anyways).
-    // Returns true if the extruder was non-zero before reset.
-    bool   reset_E() { bool modified = m_E != 0; m_E = 0.; return modified; }
+    unsigned int extruder_id() const;
+    double extrude(double dE);
+    double retract(double length, double restart_extra);
+    double unretract();
+    double E() const { return m_share_extruder ? m_share_E[extruder_id()] : m_E; }
+    void   reset_E() { m_E = 0.; m_share_E[extruder_id()] = 0.; }
+    // e_per_mm is extrusion_per_mm = geometric volume * (filament flow ratio / cross-sectional area)  [Doesn't account for print_flow_ratio, or modifiers like bridge flow ratio etc.]
     double e_per_mm(double mm3_per_mm) const { return mm3_per_mm * m_e_per_mm3; }
+    // e_per_mm3 is extrusion_per_mm3 = filament flow ratio / cross-sectional area    [Doesn't account for print_flow_ratio, or modifiers like bridge flow ratio etc.]
     double e_per_mm3() const { return m_e_per_mm3; }
     // Used filament volume in mm^3.
     double extruded_volume() const;
     // Used filament length in mm.
     double used_filament() const;
-
+    
     // Getters for the PlaceholderParser.
     // Get current extruder position. Only applicable with absolute extruder addressing.
     double position() const { return m_E; }
@@ -63,15 +61,18 @@ public:
     double filament_crossection() const { return this->filament_diameter() * this->filament_diameter() * 0.25 * PI; }
     double filament_density() const;
     double filament_cost() const;
-    double extrusion_multiplier() const;
+    double filament_flow_ratio() const;
     double retract_before_wipe() const;
-    double retract_length() const;
+    double retraction_length() const;
     double retract_lift() const;
     int    retract_speed() const;
     int    deretract_speed() const;
     double retract_restart_extra() const;
     double retract_length_toolchange() const;
     double retract_restart_extra_toolchange() const;
+    double travel_slope() const;
+
+    bool   use_firmware_retraction() const;
 
 private:
     // Private constructor to create a key for a search in std::set.
@@ -81,17 +82,21 @@ private:
     GCodeConfig *m_config;
     // Print-wide global ID of this extruder.
     unsigned int m_id;
-    // Current state of the extruder axis.
-    // For absolute extruder addressing, it is the current state since the last reset (G92 E0) issued at the end of the last retraction.
-    // For relative extruder addressing, it is the E axis difference emitted into the G-code the last time.
-    double       m_E { 0 };
+    // Current state of the extruder axis, may be resetted if use_relative_e_distances.
+    double       m_E;
     // Current state of the extruder tachometer, used to output the extruded_volume() and used_filament() statistics.
-    double       m_absolute_E { 0 };
+    double       m_absolute_E;
     // Current positive amount of retraction.
-    double       m_retracted { 0 };
+    double       m_retracted;
     // When retracted, this value stores the extra amount of priming on deretraction.
-    double       m_restart_extra { 0 };
+    double       m_restart_extra;
     double       m_e_per_mm3;
+
+    // BBS.
+    // Create shared E and retraction data for single extruder multi-material machine
+    bool          m_share_extruder;
+    static std::vector<double> m_share_E;
+    static std::vector<double> m_share_retracted;
 };
 
 // Sort Extruder objects by the extruder id by default.
@@ -102,4 +107,4 @@ inline bool operator> (const Extruder &e1, const Extruder &e2) { return e1.id() 
 
 }
 
-#endif // slic3r_Extruder_hpp_
+#endif

@@ -87,6 +87,35 @@ public class GCodeViewer {
         Native.vgcode_set_layers_view_range(pointer, min, max);
     }
 
+    public void setInfillVisibilityDepth(int depth) {
+        Native.vgcode_set_infill_visibility_depth(pointer, depth);
+    }
+
+    // gcode preview color modes (see libvgcode EViewType)
+    public static final int VIEW_TYPE_FEATURE = 0;
+    public static final int VIEW_TYPE_TOOL = 11; // color by filament/tool
+
+    public void setViewType(int type) {
+        Native.vgcode_set_view_type(pointer, type);
+    }
+
+    public int getViewType() {
+        return Native.vgcode_get_view_type(pointer);
+    }
+
+    /** Per-filament colors used by the Tool (filament) view; each int is 0xRRGGBB. */
+    public void setToolColors(int[] colors) {
+        Native.vgcode_set_tool_colors(pointer, colors);
+    }
+
+    public void setFastMode(boolean fastMode) {
+        Native.vgcode_set_fast_mode(pointer, fastMode);
+    }
+
+    public void setSelectedObjectId(int id) {
+        Native.vgcode_set_selected_object_id(pointer, id);
+    }
+
     public Pair<Long, Long> getLayersViewRange() {
         long[] data = Native.vgcode_get_layers_view_range(pointer);
         return new Pair<>(data[0], data[1] < 0 ? getLayersCount() : data[1]);

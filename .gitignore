@@ -44,3 +44,14 @@ app/src/main/occt/include
 app/src/main/assets/update.json
 vendor/upstream-apk/
 app/src/prebuiltNative/jniLibs/
+
+# Local tooling / transient files (not part of the app)
+venv/
+.agents/
+scratch/
+orcaslicer_mobile_assets/
+logcat.txt
+compile_mocks.txt
+/benchy.gcode
+/benchy_new.gcode
+app/screen.png

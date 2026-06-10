@@ -4156,6 +4156,8 @@ static mz_bool mz_zip_file_stat_internal(mz_zip_archive *pZip, mz_uint file_inde
     pStat->m_is_directory = mz_zip_reader_is_file_a_directory(pZip, file_index);
     pStat->m_is_encrypted = mz_zip_reader_is_file_encrypted(pZip, file_index);
     pStat->m_is_supported = mz_zip_reader_is_file_supported(pZip, file_index);
+    /* BBS: general purpose bit 11 (0x800) flags a UTF-8 filename. */
+    pStat->m_is_utf8 = (pStat->m_bit_flag & 0x800) ? MZ_TRUE : MZ_FALSE;
 
     /* See if we need to read any zip64 extended information fields. */
     /* Confusingly, these zip64 fields can be present even on non-zip64 archives (Debian zip on a huge files from stdin piped to stdout creates them). */
@@ -7954,6 +7956,27 @@ mz_uint mz_zip_reader_get_filename_from_extra(mz_zip_archive* pZip, mz_uint file
         }
     }
     return 0;
+}
+
+mz_uint mz_zip_reader_get_extra(mz_zip_archive *pZip, mz_uint file_index, char *pExtra, mz_uint extra_buf_size)
+{
+    /* BBS: copy the raw EXTRA field bytes from the central directory record. */
+    mz_uint nf, ne, n;
+    const mz_uint8 *p = mz_zip_get_cdh(pZip, file_index);
+    if (!p)
+    {
+        if (extra_buf_size)
+            pExtra[0] = '\0';
+        mz_zip_set_error(pZip, MZ_ZIP_INVALID_PARAMETER);
+        return 0;
+    }
+    if (extra_buf_size == 0)
+        return 0;
+    nf = MZ_READ_LE16(p + MZ_ZIP_CDH_FILENAME_LEN_OFS);
+    ne = MZ_READ_LE16(p + MZ_ZIP_CDH_EXTRA_LEN_OFS);
+    n = MZ_MIN(ne, extra_buf_size);
+    memcpy(pExtra, p + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE + nf, n);
+    return n;
 }
 
 mz_bool mz_zip_reader_file_stat(mz_zip_archive *pZip, mz_uint file_index, mz_zip_archive_file_stat *pStat)

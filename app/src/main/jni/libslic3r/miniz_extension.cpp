@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2019 - 2023 Oleksandra Iushchenko @YuSanka, Tomáš Mészáros @tamasmeszaros, Enrico Turri @enricoturri1966
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include <exception>
 
 #include "miniz_extension.hpp"
@@ -10,7 +6,11 @@
 #include "boost/nowide/cstdio.hpp"
 #endif
 
-#include "libslic3r/I18N.hpp"
+#include "I18N.hpp"
+
+//! macro used to mark string used at localization,
+//! return same string
+#define L(s) Slic3r::I18N::translate(s)
 
 namespace Slic3r {
 
@@ -88,67 +88,67 @@ std::string MZ_Archive::get_errorstr(mz_zip_error mz_err)
     case MZ_ZIP_NO_ERROR:
         return "no error";
     case MZ_ZIP_UNDEFINED_ERROR:
-        return _u8L("undefined error");
+        return L("undefined error");
     case MZ_ZIP_TOO_MANY_FILES:
-        return _u8L("too many files");
+        return L("too many files");
     case MZ_ZIP_FILE_TOO_LARGE:
-        return _u8L("file too large");
+        return L("file too large");
     case MZ_ZIP_UNSUPPORTED_METHOD:
-        return _u8L("unsupported method");
+        return L("unsupported method");
     case MZ_ZIP_UNSUPPORTED_ENCRYPTION:
-        return _u8L("unsupported encryption");
+        return L("unsupported encryption");
     case MZ_ZIP_UNSUPPORTED_FEATURE:
-        return _u8L("unsupported feature");
+        return L("unsupported feature");
     case MZ_ZIP_FAILED_FINDING_CENTRAL_DIR:
-        return _u8L("failed finding central directory");
+        return L("failed finding central directory");
     case MZ_ZIP_NOT_AN_ARCHIVE:
-        return _u8L("not a ZIP archive");
+        return L("not a ZIP archive");
     case MZ_ZIP_INVALID_HEADER_OR_CORRUPTED:
-        return _u8L("invalid header or archive is corrupted");
+        return L("invalid header or corrupted");
     case MZ_ZIP_UNSUPPORTED_MULTIDISK:
-        return _u8L("unsupported multidisk archive");
+        return L("unsupported multidisk");
     case MZ_ZIP_DECOMPRESSION_FAILED:
-        return _u8L("decompression failed or archive is corrupted");
+        return L("decompression failed");
     case MZ_ZIP_COMPRESSION_FAILED:
-        return _u8L("compression failed");
+        return L("compression failed");
     case MZ_ZIP_UNEXPECTED_DECOMPRESSED_SIZE:
-        return _u8L("unexpected decompressed size");
+        return L("unexpected decompressed size");
     case MZ_ZIP_CRC_CHECK_FAILED:
-        return _u8L("CRC-32 check failed");
+        return L("CRC check failed");
     case MZ_ZIP_UNSUPPORTED_CDIR_SIZE:
-        return _u8L("unsupported central directory size");
+        return L("unsupported central directory size");
     case MZ_ZIP_ALLOC_FAILED:
-        return _u8L("allocation failed");
+        return L("allocation failed");
     case MZ_ZIP_FILE_OPEN_FAILED:
-        return _u8L("file open failed");
+        return L("file open failed");
     case MZ_ZIP_FILE_CREATE_FAILED:
-        return _u8L("file create failed");
+        return L("file create failed");
     case MZ_ZIP_FILE_WRITE_FAILED:
-        return _u8L("file write failed");
+        return L("file write failed");
     case MZ_ZIP_FILE_READ_FAILED:
-        return _u8L("file read failed");
+        return L("file read failed");
     case MZ_ZIP_FILE_CLOSE_FAILED:
-        return _u8L("file close failed");
+        return L("file close failed");
     case MZ_ZIP_FILE_SEEK_FAILED:
-        return _u8L("file seek failed");
+        return L("file seek failed");
     case MZ_ZIP_FILE_STAT_FAILED:
-        return _u8L("file stat failed");
+        return L("file stat failed");
     case MZ_ZIP_INVALID_PARAMETER:
-        return _u8L("invalid parameter");
+        return L("invalid parameter");
     case MZ_ZIP_INVALID_FILENAME:
-        return _u8L("invalid filename");
+        return L("invalid filename");
     case MZ_ZIP_BUF_TOO_SMALL:
-        return _u8L("buffer too small");
+        return L("buffer too small");
     case MZ_ZIP_INTERNAL_ERROR:
-        return _u8L("internal error");
+        return L("internal error");
     case MZ_ZIP_FILE_NOT_FOUND:
-        return _u8L("file not found");
+        return L("file not found");
     case MZ_ZIP_ARCHIVE_TOO_LARGE:
-        return _u8L("archive is too large");
+        return L("archive too large");
     case MZ_ZIP_VALIDATION_FAILED:
-        return _u8L("validation failed");
+        return L("validation failed");
     case MZ_ZIP_WRITE_CALLBACK_FAILED:
-        return _u8L("write calledback failed");
+        return L("write callback failed");
     default:
         break;
     }

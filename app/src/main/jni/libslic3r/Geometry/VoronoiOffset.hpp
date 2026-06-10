@@ -1,15 +1,17 @@
-///|/ Copyright (c) Prusa Research 2020 - 2022 Vojtěch Bubník @bubnikv
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
-// Polygon offsetting using Voronoi diagram produced by boost::polygon.
+// Polygon offsetting using Voronoi diagram prodiced by boost::polygon.
 
 #ifndef slic3r_VoronoiOffset_hpp_
 #define slic3r_VoronoiOffset_hpp_
 
-#include "../libslic3r.h"
+#include <boost/polygon/polygon.hpp>
+#include <cmath>
+#include <vector>
 
+#include "libslic3r/libslic3r.h"
 #include "Voronoi.hpp"
+#include "libslic3r/Line.hpp"
+#include "libslic3r/Point.hpp"
+#include "libslic3r/Polygon.hpp"
 
 namespace Slic3r {
 

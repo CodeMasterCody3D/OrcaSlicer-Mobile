@@ -1,14 +1,8 @@
-///|/ Copyright (c) Prusa Research 2022 - 2023 Tomáš Mészáros @tamasmeszaros
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef CSGMESH_HPP
 #define CSGMESH_HPP
 
-#include "libslic3r/Point.hpp"
-
 #include <libslic3r/AnyPtr.hpp>
-#include <libslic3r/TriangleMesh.hpp>
+#include <admesh/stl.h>
 
 namespace Slic3r { namespace csg {
 
@@ -76,6 +70,7 @@ struct CSGPart {
     Transform3f trafo;
     CSGType operation;
     CSGStackOp stack_operation;
+    std::string name;
 
     CSGPart(AnyPtr<const indexed_triangle_set> ptr = {},
             CSGType                            op  = CSGType::Union,
@@ -87,6 +82,7 @@ struct CSGPart {
     {}
 };
 
+//Prusa
 // Check if there are only positive parts (Union) within the collection.
 template<class Cont> bool is_all_positive(const Cont &csgmesh)
 {
@@ -100,6 +96,7 @@ template<class Cont> bool is_all_positive(const Cont &csgmesh)
     return is_all_pos;
 }
 
+//Prusa
 // Merge all the positive parts of the collection into a single triangle mesh without performing
 // any booleans.
 template<class Cont>

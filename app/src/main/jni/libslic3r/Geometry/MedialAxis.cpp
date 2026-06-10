@@ -1,14 +1,16 @@
-///|/ Copyright (c) Prusa Research 2021 - 2023 Vojtěch Bubník @bubnikv, Lukáš Matěna @lukasmatena
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
+#include <boost/log/trivial.hpp>
 #include "MedialAxis.hpp"
 
-#include "clipper.hpp"
-#include "VoronoiOffset.hpp"
-#include "ClipperUtils.hpp"
-
 #include <boost/log/trivial.hpp>
+#include <boost/polygon/polygon.hpp>
+#include <cassert>
+#include <cmath>
+
+#include "VoronoiOffset.hpp"
+#include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/ExPolygon.hpp"
+#include "libslic3r/Point.hpp"
+#include "libslic3r/libslic3r.h"
 
 #ifdef SLIC3R_DEBUG
 namespace boost { namespace polygon {
@@ -451,25 +453,10 @@ private:
 
 MedialAxis::MedialAxis(double min_width, double max_width, const ExPolygon &expolygon) :
     m_expolygon(expolygon), m_lines(expolygon.lines()), m_min_width(min_width), m_max_width(max_width)
-{
-    (void)m_expolygon; // supress unused variable warning
-}
+{}
 
 void MedialAxis::build(ThickPolylines* polylines)
 {
-#ifndef NDEBUG
-    // Verify the scaling of the coordinates of input line segments.
-    for (const Line& l : m_lines) {
-        auto test = [](int32_t v) {
-            static constexpr const int32_t hi = 65536 * 16383;
-            assert(v <= hi && -v < hi);
-        };
-        test(l.a.x());
-        test(l.a.y());
-        test(l.b.x());
-        test(l.b.y());
-    }
-#endif // NDEBUG
     m_vd.construct_voronoi(m_lines.begin(), m_lines.end());
 
     // For several ExPolygons in SPE-1729, an invalid Voronoi diagram was produced that wasn't fixable by rotating input data.
@@ -629,13 +616,13 @@ bool MedialAxis::validate_edge(const VD::edge_type* edge)
     };
 
     // prevent overflows and detect almost-infinite edges
-#ifndef CLIPPERLIB_INT32
-    if (std::abs(edge->vertex0()->x()) > double(CLIPPER_MAX_COORD_UNSCALED) || 
-        std::abs(edge->vertex0()->y()) > double(CLIPPER_MAX_COORD_UNSCALED) || 
-        std::abs(edge->vertex1()->x()) > double(CLIPPER_MAX_COORD_UNSCALED) ||
-        std::abs(edge->vertex1()->y()) > double(CLIPPER_MAX_COORD_UNSCALED))
-        return false;
-#endif // CLIPPERLIB_INT32
+// #ifndef CLIPPERLIB_INT32
+//     if (std::abs(edge->vertex0()->x()) > double(CLIPPER_MAX_COORD_UNSCALED) || 
+//         std::abs(edge->vertex0()->y()) > double(CLIPPER_MAX_COORD_UNSCALED) || 
+//         std::abs(edge->vertex1()->x()) > double(CLIPPER_MAX_COORD_UNSCALED) ||
+//         std::abs(edge->vertex1()->y()) > double(CLIPPER_MAX_COORD_UNSCALED))
+//         return false;
+// #endif // CLIPPERLIB_INT32
 
     // construct the line representing this edge of the Voronoi diagram
     const Line line({ edge->vertex0()->x(), edge->vertex0()->y() },

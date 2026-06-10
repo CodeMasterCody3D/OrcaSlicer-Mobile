@@ -85,6 +85,15 @@ public:
     bool is_top_layer_only_view_range() const { return m_settings.top_layer_only_view_range; }
     void toggle_top_layer_only_view_range();
 
+    int get_infill_visibility_depth() const { return m_settings.infill_visibility_depth; }
+    void set_infill_visibility_depth(int depth);
+
+    bool is_fast_mode() const { return m_settings.fast_mode; }
+    void set_fast_mode(bool fast_mode);
+
+    int get_selected_object_id() const { return m_settings.selected_object_id; }
+    void set_selected_object_id(int id);
+
     bool is_spiral_vase_mode() const { return m_settings.spiral_vase_mode; }
 
     std::vector<ETimeMode> get_time_modes() const;
@@ -270,6 +279,10 @@ private:
 
     // Cache for the colors to reduce the need to recalculate colors of all the vertices.
     std::vector<float> m_vertices_colors;
+
+    // Bounding box for fixed-point coordinate quantization
+    Vec3 m_positions_min;
+    Vec3 m_positions_max;
 
     //
     // Variables used for toolpaths visibiliity

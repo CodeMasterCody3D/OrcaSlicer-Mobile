@@ -24,6 +24,7 @@ add_definitions(-w)
 add_definitions(-DNDEBUG)
 add_definitions(-DSLIC3R_VERSION=${SLIC3R_VERSION})
 add_definitions(-DSLIC3R_BUILD_ID=${SLIC3R_BUILD_ID})
+add_definitions(-DSoftFever_VERSION=${SLIC3R_VERSION})
 
 set(jni_imports ${CMAKE_SOURCE_DIR}/src/main/jniImports)
 set(jni_libs ${CMAKE_SOURCE_DIR}/src/main/jniLibs)
@@ -87,6 +88,7 @@ set_target_properties(mpfr PROPERTIES IMPORTED_LOCATION
 
 include_directories(src/main/jni/eigen)
 include_directories(src/main/jni/libigl)
+include_directories(src/main/occt/include/${ANDROID_ABI})
 
 # Expat config
 set(EXPAT_CONTEXT_BYTES 1024)
@@ -457,6 +459,10 @@ add_library(openvdb
         src/main/jni/openvdb/util/Formats.cc
         src/main/jni/openvdb/util/Util.cc)
 target_include_directories(openvdb PRIVATE src/main/jni src/main/jniImports/boost/include src/main/jniImports/oneTBB/include)
+set(MCUT_BUILD_AS_SHARED_LIB OFF)
+set(MCUT_BUILD_TESTS OFF)
+set(MCUT_BUILD_TUTORIALS OFF)
+add_subdirectory(src/main/jni/mcut)
 
 add_library(slic3r
         SHARED
@@ -715,40 +721,89 @@ add_library(slic3r
         src/main/jni/libvgcode/src/ViewRange.hpp
         src/main/jni/libvgcode/src/ViewRange.cpp
 
-        src/main/jni/libslic3r/AStar.hpp
+        src/main/jni/libslic3r/AABBMesh.cpp
+        src/main/jni/libslic3r/AABBMesh.hpp
         src/main/jni/libslic3r/AABBTreeIndirect.hpp
         src/main/jni/libslic3r/AABBTreeLines.hpp
-        src/main/jni/libslic3r/AABBMesh.hpp
-        src/main/jni/libslic3r/AABBMesh.cpp
-        src/main/jni/libslic3r/Algorithm/PathSorting.hpp
-        src/main/jni/libslic3r/Algorithm/RegionExpansion.hpp
+        src/main/jni/libslic3r/Algorithm/LineSplit.cpp
+        src/main/jni/libslic3r/Algorithm/LineSplit.hpp
         src/main/jni/libslic3r/Algorithm/RegionExpansion.cpp
+        src/main/jni/libslic3r/Algorithm/RegionExpansion.hpp
         src/main/jni/libslic3r/AnyPtr.hpp
+        src/main/jni/libslic3r/AppConfig.cpp
+        src/main/jni/libslic3r/AppConfig.hpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/BeadingStrategy.cpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/BeadingStrategyFactory.cpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/BeadingStrategyFactory.hpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/BeadingStrategy.hpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/DistributedBeadingStrategy.cpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/DistributedBeadingStrategy.hpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/LimitedBeadingStrategy.cpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/LimitedBeadingStrategy.hpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/OuterWallInsetBeadingStrategy.cpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/OuterWallInsetBeadingStrategy.hpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/RedistributeBeadingStrategy.cpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/RedistributeBeadingStrategy.hpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/WideningBeadingStrategy.cpp
+        src/main/jni/libslic3r/Arachne/BeadingStrategy/WideningBeadingStrategy.hpp
+        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidation.cpp
+        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidationEdge.hpp
+        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidationGraph.cpp
+        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidationGraph.hpp
+        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidation.hpp
+        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidationJoint.hpp
+        src/main/jni/libslic3r/Arachne/utils/ExtrusionJunction.hpp
+        src/main/jni/libslic3r/Arachne/utils/ExtrusionLine.cpp
+        src/main/jni/libslic3r/Arachne/utils/ExtrusionLine.hpp
+        src/main/jni/libslic3r/Arachne/utils/HalfEdgeGraph.hpp
+        src/main/jni/libslic3r/Arachne/utils/HalfEdge.hpp
+        src/main/jni/libslic3r/Arachne/utils/HalfEdgeNode.hpp
+        src/main/jni/libslic3r/Arachne/utils/PolygonsPointIndex.hpp
+        src/main/jni/libslic3r/Arachne/utils/PolygonsSegmentIndex.hpp
+        src/main/jni/libslic3r/Arachne/utils/PolylineStitcher.cpp
+        src/main/jni/libslic3r/Arachne/utils/PolylineStitcher.hpp
+        src/main/jni/libslic3r/Arachne/utils/SparseGrid.hpp
+        src/main/jni/libslic3r/Arachne/utils/SparseLineGrid.hpp
+        src/main/jni/libslic3r/Arachne/utils/SparsePointGrid.hpp
+        src/main/jni/libslic3r/Arachne/utils/SquareGrid.cpp
+        src/main/jni/libslic3r/Arachne/utils/SquareGrid.hpp
+        src/main/jni/libslic3r/Arachne/WallToolPaths.cpp
+        src/main/jni/libslic3r/Arachne/WallToolPaths.hpp
+        src/main/jni/libslic3r/ArcFitter.cpp
+        src/main/jni/libslic3r/ArcFitter.hpp
+        src/main/jni/libslic3r/Arrange.cpp
+        src/main/jni/libslic3r/Arrange.hpp
+        src/main/jni/libslic3r/BlacklistedLibraryCheck.cpp
+        src/main/jni/libslic3r/BlacklistedLibraryCheck.hpp
         src/main/jni/libslic3r/BoundingBox.cpp
         src/main/jni/libslic3r/BoundingBox.hpp
         src/main/jni/libslic3r/BridgeDetector.cpp
         src/main/jni/libslic3r/BridgeDetector.hpp
         src/main/jni/libslic3r/Brim.cpp
+        src/main/jni/libslic3r/BrimEarsPoint.hpp
         src/main/jni/libslic3r/Brim.hpp
         src/main/jni/libslic3r/BuildVolume.cpp
         src/main/jni/libslic3r/BuildVolume.hpp
-        src/main/jni/libslic3r/BoostAdapter.hpp
+        src/main/jni/libslic3r/calib.cpp
+        src/main/jni/libslic3r/calib.hpp
+        src/main/jni/libslic3r/Circle.cpp
+        src/main/jni/libslic3r/Circle.hpp
         src/main/jni/libslic3r/clipper.cpp
         src/main/jni/libslic3r/clipper.hpp
         src/main/jni/libslic3r/ClipperUtils.cpp
         src/main/jni/libslic3r/ClipperUtils.hpp
+
         src/main/jni/libslic3r/ClipperZUtils.hpp
         src/main/jni/libslic3r/Color.cpp
         src/main/jni/libslic3r/Color.hpp
+        src/main/jni/libslic3r/CommonDefs.hpp
         src/main/jni/libslic3r/Config.cpp
         src/main/jni/libslic3r/Config.hpp
-        src/main/jni/libslic3r/CSGMesh/CSGMesh.hpp
-        src/main/jni/libslic3r/CSGMesh/SliceCSGMesh.hpp
-        src/main/jni/libslic3r/CSGMesh/ModelToCSGMesh.hpp
-        src/main/jni/libslic3r/CSGMesh/PerformCSGMeshBooleans.hpp
-        src/main/jni/libslic3r/CSGMesh/VoxelizeCSGMesh.hpp
-        src/main/jni/libslic3r/CSGMesh/TriangleMeshAdapter.hpp
-        src/main/jni/libslic3r/CSGMesh/CSGMeshCopy.hpp
+        src/main/jni/libslic3r/ContourZ.cpp
+        src/main/jni/libslic3r/CustomGCode.cpp
+        src/main/jni/libslic3r/CustomGCode.hpp
+        src/main/jni/libslic3r/CutUtils.cpp
+        src/main/jni/libslic3r/CutUtils.hpp
         src/main/jni/libslic3r/EdgeGrid.cpp
         src/main/jni/libslic3r/EdgeGrid.hpp
         src/main/jni/libslic3r/ElephantFootCompensation.cpp
@@ -757,6 +812,9 @@ add_library(slic3r
         src/main/jni/libslic3r/Emboss.hpp
         src/main/jni/libslic3r/EmbossShape.hpp
         src/main/jni/libslic3r/enum_bitmask.hpp
+        src/main/jni/libslic3r/Execution/Execution.hpp
+        src/main/jni/libslic3r/Execution/ExecutionSeq.hpp
+        src/main/jni/libslic3r/Execution/ExecutionTBB.hpp
         src/main/jni/libslic3r/ExPolygon.cpp
         src/main/jni/libslic3r/ExPolygon.hpp
         src/main/jni/libslic3r/ExPolygonSerialize.hpp
@@ -764,16 +822,21 @@ add_library(slic3r
         src/main/jni/libslic3r/ExPolygonsIndex.hpp
         src/main/jni/libslic3r/Extruder.cpp
         src/main/jni/libslic3r/Extruder.hpp
-        src/main/jni/libslic3r/ExtrusionEntity.cpp
-        src/main/jni/libslic3r/ExtrusionEntity.hpp
         src/main/jni/libslic3r/ExtrusionEntityCollection.cpp
         src/main/jni/libslic3r/ExtrusionEntityCollection.hpp
-        src/main/jni/libslic3r/ExtrusionRole.cpp
-        src/main/jni/libslic3r/ExtrusionRole.hpp
+        src/main/jni/libslic3r/ExtrusionEntity.cpp
+        src/main/jni/libslic3r/ExtrusionEntity.hpp
         src/main/jni/libslic3r/ExtrusionSimulator.cpp
         src/main/jni/libslic3r/ExtrusionSimulator.hpp
+        src/main/jni/libslic3r/FaceDetector.cpp
+        src/main/jni/libslic3r/FaceDetector.hpp
+        src/main/jni/libslic3r/Feature/FuzzySkin/FuzzySkin.cpp
+        src/main/jni/libslic3r/Feature/FuzzySkin/FuzzySkin.hpp
+        src/main/jni/libslic3r/Feature/Interlocking/InterlockingGenerator.cpp
+        src/main/jni/libslic3r/Feature/Interlocking/InterlockingGenerator.hpp
+        src/main/jni/libslic3r/Feature/Interlocking/VoxelUtils.cpp
+        src/main/jni/libslic3r/Feature/Interlocking/VoxelUtils.hpp
         src/main/jni/libslic3r/FileParserError.hpp
-        src/main/jni/libslic3r/Fill/Fill.cpp
         src/main/jni/libslic3r/Fill/Fill3DHoneycomb.cpp
         src/main/jni/libslic3r/Fill/Fill3DHoneycomb.hpp
         src/main/jni/libslic3r/Fill/FillAdaptive.cpp
@@ -782,18 +845,28 @@ add_library(slic3r
         src/main/jni/libslic3r/Fill/FillBase.hpp
         src/main/jni/libslic3r/Fill/FillConcentric.cpp
         src/main/jni/libslic3r/Fill/FillConcentric.hpp
-        src/main/jni/libslic3r/Fill/FillEnsuring.cpp
-        src/main/jni/libslic3r/Fill/FillEnsuring.hpp
-        src/main/jni/libslic3r/Fill/FillHoneycomb.cpp
-        src/main/jni/libslic3r/Fill/FillHoneycomb.hpp
+        src/main/jni/libslic3r/Fill/FillConcentricInternal.cpp
+        src/main/jni/libslic3r/Fill/FillConcentricInternal.hpp
+        src/main/jni/libslic3r/Fill/Fill.cpp
+        src/main/jni/libslic3r/Fill/FillCrossHatch.cpp
+        src/main/jni/libslic3r/Fill/FillCrossHatch.hpp
         src/main/jni/libslic3r/Fill/FillGyroid.cpp
         src/main/jni/libslic3r/Fill/FillGyroid.hpp
-        src/main/jni/libslic3r/Fill/FillPlanePath.cpp
-        src/main/jni/libslic3r/Fill/FillPlanePath.hpp
-        src/main/jni/libslic3r/Fill/FillLine.cpp
-        src/main/jni/libslic3r/Fill/FillLine.hpp
+        src/main/jni/libslic3r/Fill/FillHoneycomb.cpp
+        src/main/jni/libslic3r/Fill/FillHoneycomb.hpp
+        src/main/jni/libslic3r/Fill/Fill.hpp
         src/main/jni/libslic3r/Fill/FillLightning.cpp
         src/main/jni/libslic3r/Fill/FillLightning.hpp
+        src/main/jni/libslic3r/Fill/FillLine.cpp
+        src/main/jni/libslic3r/Fill/FillLine.hpp
+        src/main/jni/libslic3r/Fill/FillPlanePath.cpp
+        src/main/jni/libslic3r/Fill/FillPlanePath.hpp
+        src/main/jni/libslic3r/Fill/FillRectilinear.cpp
+        src/main/jni/libslic3r/Fill/FillRectilinear.hpp
+        src/main/jni/libslic3r/Fill/FillTpmsD.cpp
+        src/main/jni/libslic3r/Fill/FillTpmsD.hpp
+        src/main/jni/libslic3r/Fill/FillTpmsFK.cpp
+        src/main/jni/libslic3r/Fill/FillTpmsFK.hpp
         src/main/jni/libslic3r/Fill/Lightning/DistanceField.cpp
         src/main/jni/libslic3r/Fill/Lightning/DistanceField.hpp
         src/main/jni/libslic3r/Fill/Lightning/Generator.cpp
@@ -802,250 +875,196 @@ add_library(slic3r
         src/main/jni/libslic3r/Fill/Lightning/Layer.hpp
         src/main/jni/libslic3r/Fill/Lightning/TreeNode.cpp
         src/main/jni/libslic3r/Fill/Lightning/TreeNode.hpp
-        src/main/jni/libslic3r/Fill/FillRectilinear.cpp
-        src/main/jni/libslic3r/Fill/FillRectilinear.hpp
         src/main/jni/libslic3r/Flow.cpp
         src/main/jni/libslic3r/Flow.hpp
-        src/main/jni/libslic3r/format.hpp
+        src/main/jni/libslic3r/FlushVolCalc.cpp
+        src/main/jni/libslic3r/FlushVolCalc.hpp
         src/main/jni/libslic3r/Format/3mf.cpp
         src/main/jni/libslic3r/Format/3mf.hpp
         src/main/jni/libslic3r/Format/AMF.cpp
         src/main/jni/libslic3r/Format/AMF.hpp
+        src/main/jni/libslic3r/Format/bbs_3mf.cpp
+        src/main/jni/libslic3r/Format/bbs_3mf.hpp
+        src/main/jni/libslic3r/Format/STEP.cpp
+        src/main/jni/libslic3r/Format/STEP.hpp
+        src/main/jni/libslic3r/format.hpp
         src/main/jni/libslic3r/Format/OBJ.cpp
         src/main/jni/libslic3r/Format/OBJ.hpp
         src/main/jni/libslic3r/Format/objparser.cpp
         src/main/jni/libslic3r/Format/objparser.hpp
+        src/main/jni/libslic3r/Format/SL1.cpp
+        src/main/jni/libslic3r/Format/SL1.hpp
         src/main/jni/libslic3r/Format/STL.cpp
         src/main/jni/libslic3r/Format/STL.hpp
-        src/main/jni/libslic3r/Format/SLAArchiveWriter.hpp
-        src/main/jni/libslic3r/Format/SLAArchiveWriter.cpp
-        src/main/jni/libslic3r/Format/SLAArchiveReader.hpp
-        src/main/jni/libslic3r/Format/SLAArchiveReader.cpp
-        src/main/jni/libslic3r/Format/ZipperArchiveImport.hpp
+        src/main/jni/libslic3r/Format/svg.cpp
+        src/main/jni/libslic3r/Format/svg.hpp
         src/main/jni/libslic3r/Format/ZipperArchiveImport.cpp
-        src/main/jni/libslic3r/Format/SL1.hpp
-        src/main/jni/libslic3r/Format/SL1.cpp
-        src/main/jni/libslic3r/Format/SL1_SVG.hpp
-        src/main/jni/libslic3r/Format/SL1_SVG.cpp
-        src/main/jni/libslic3r/Format/AnycubicSLA.hpp
-        src/main/jni/libslic3r/Format/AnycubicSLA.cpp
-        src/main/jni/libslic3r/Format/STEP.hpp
-        src/main/jni/libslic3r/Format/STEP.cpp
-        src/main/jni/libslic3r/Format/SVG.hpp
-        src/main/jni/libslic3r/Format/SVG.cpp
-        src/main/jni/libslic3r/Format/SLAArchiveFormatRegistry.hpp
-        src/main/jni/libslic3r/Format/SLAArchiveFormatRegistry.cpp
-        src/main/jni/libslic3r/Format/PrintRequest.cpp
-        src/main/jni/libslic3r/Format/PrintRequest.cpp
-        src/main/jni/libslic3r/GCode/ThumbnailData.cpp
-        src/main/jni/libslic3r/GCode/ThumbnailData.hpp
-        src/main/jni/libslic3r/GCode/Thumbnails.cpp
-        src/main/jni/libslic3r/GCode/Thumbnails.hpp
+        src/main/jni/libslic3r/Format/ZipperArchiveImport.hpp
+        src/main/jni/libslic3r/GCode/AdaptivePAInterpolator.cpp
+        src/main/jni/libslic3r/GCode/AdaptivePAInterpolator.hpp
+        src/main/jni/libslic3r/GCode/AdaptivePAProcessor.cpp
+        src/main/jni/libslic3r/GCode/AdaptivePAProcessor.hpp
+        src/main/jni/libslic3r/GCode/AvoidCrossingPerimeters.cpp
+        src/main/jni/libslic3r/GCode/AvoidCrossingPerimeters.hpp
         src/main/jni/libslic3r/GCode/ConflictChecker.cpp
         src/main/jni/libslic3r/GCode/ConflictChecker.hpp
         src/main/jni/libslic3r/GCode/CoolingBuffer.cpp
         src/main/jni/libslic3r/GCode/CoolingBuffer.hpp
-        src/main/jni/libslic3r/GCode/ExtrusionProcessor.cpp
+        src/main/jni/libslic3r/GCode/TimelapsePosPicker.cpp
+        src/main/jni/libslic3r/GCode/TimelapsePosPicker.hpp
+        src/main/jni/libslic3r/GCode.cpp
         src/main/jni/libslic3r/GCode/ExtrusionProcessor.hpp
-        src/main/jni/libslic3r/GCode/FindReplace.cpp
-        src/main/jni/libslic3r/GCode/FindReplace.hpp
-        src/main/jni/libslic3r/GCode/LabelObjects.cpp
-        src/main/jni/libslic3r/GCode/LabelObjects.hpp
-        src/main/jni/libslic3r/GCode/GCodeWriter.cpp
-        src/main/jni/libslic3r/GCode/GCodeWriter.hpp
+        src/main/jni/libslic3r/GCode/FanMover.cpp
+        src/main/jni/libslic3r/GCode/FanMover.hpp
+        src/main/jni/libslic3r/GCode/GCodeProcessor.cpp
+        src/main/jni/libslic3r/GCode/GCodeProcessor.hpp
+        src/main/jni/libslic3r/GCode.hpp
+        src/main/jni/libslic3r/GCode/PchipInterpolatorHelper.cpp
+        src/main/jni/libslic3r/GCode/PchipInterpolatorHelper.hpp
         src/main/jni/libslic3r/GCode/PostProcessor.cpp
         src/main/jni/libslic3r/GCode/PostProcessor.hpp
         src/main/jni/libslic3r/GCode/PressureEqualizer.cpp
         src/main/jni/libslic3r/GCode/PressureEqualizer.hpp
         src/main/jni/libslic3r/GCode/PrintExtents.cpp
         src/main/jni/libslic3r/GCode/PrintExtents.hpp
-        src/main/jni/libslic3r/GCode/RetractWhenCrossingPerimeters.cpp
-        src/main/jni/libslic3r/GCode/RetractWhenCrossingPerimeters.hpp
-        src/main/jni/libslic3r/GCode/SpiralVase.cpp
-        src/main/jni/libslic3r/GCode/SpiralVase.hpp
-        src/main/jni/libslic3r/GCode/SeamPlacer.cpp
-        src/main/jni/libslic3r/GCode/SeamPlacer.hpp
-        src/main/jni/libslic3r/GCode/SeamChoice.cpp
-        src/main/jni/libslic3r/GCode/SeamChoice.hpp
-        src/main/jni/libslic3r/GCode/SeamPerimeters.cpp
-        src/main/jni/libslic3r/GCode/SeamPerimeters.hpp
-        src/main/jni/libslic3r/GCode/SeamShells.cpp
-        src/main/jni/libslic3r/GCode/SeamShells.hpp
-        src/main/jni/libslic3r/GCode/SeamGeometry.cpp
-        src/main/jni/libslic3r/GCode/SeamGeometry.hpp
-        src/main/jni/libslic3r/GCode/SeamAligned.cpp
-        src/main/jni/libslic3r/GCode/SeamAligned.hpp
-        src/main/jni/libslic3r/GCode/SeamRear.cpp
-        src/main/jni/libslic3r/GCode/SeamRear.hpp
-        src/main/jni/libslic3r/GCode/SeamRandom.cpp
-        src/main/jni/libslic3r/GCode/SeamRandom.hpp
-        src/main/jni/libslic3r/GCode/SeamPainting.cpp
-        src/main/jni/libslic3r/GCode/SeamPainting.hpp
-        src/main/jni/libslic3r/GCode/ModelVisibility.cpp
-        src/main/jni/libslic3r/GCode/ModelVisibility.hpp
-        src/main/jni/libslic3r/GCode/SmoothPath.cpp
-        src/main/jni/libslic3r/GCode/SmoothPath.hpp
-        src/main/jni/libslic3r/GCode/ToolOrdering.cpp
-        src/main/jni/libslic3r/GCode/ToolOrdering.hpp
-        src/main/jni/libslic3r/GCode/Wipe.cpp
-        src/main/jni/libslic3r/GCode/Wipe.hpp
-        src/main/jni/libslic3r/GCode/WipeTower.cpp
-        src/main/jni/libslic3r/GCode/WipeTower.hpp
-        src/main/jni/libslic3r/GCode/WipeTowerIntegration.cpp
-        src/main/jni/libslic3r/GCode/WipeTowerIntegration.hpp
-        src/main/jni/libslic3r/GCode/GCodeProcessor.cpp
-        src/main/jni/libslic3r/GCode/GCodeProcessor.hpp
-        src/main/jni/libslic3r/GCode/AvoidCrossingPerimeters.cpp
-        src/main/jni/libslic3r/GCode/AvoidCrossingPerimeters.hpp
-        src/main/jni/libslic3r/GCode/Travels.cpp
-        src/main/jni/libslic3r/GCode/Travels.hpp
-        src/main/jni/libslic3r/GCode.cpp
-        src/main/jni/libslic3r/GCode.hpp
         src/main/jni/libslic3r/GCodeReader.cpp
         src/main/jni/libslic3r/GCodeReader.hpp
-        src/main/jni/libslic3r/Geometry.cpp
-        src/main/jni/libslic3r/Geometry.hpp
-        src/main/jni/libslic3r/Geometry/ArcWelder.cpp
+        src/main/jni/libslic3r/GCode/RetractWhenCrossingPerimeters.cpp
+        src/main/jni/libslic3r/GCode/RetractWhenCrossingPerimeters.hpp
+        src/main/jni/libslic3r/GCode/SeamPlacer.cpp
+        src/main/jni/libslic3r/GCode/SeamPlacer.hpp
+        src/main/jni/libslic3r/GCode/SmallAreaInfillFlowCompensator.cpp
+        src/main/jni/libslic3r/GCode/SmallAreaInfillFlowCompensator.hpp
+        src/main/jni/libslic3r/GCode/SpiralVase.cpp
+        src/main/jni/libslic3r/GCode/SpiralVase.hpp
+        src/main/jni/libslic3r/GCode/ThumbnailData.cpp
+        src/main/jni/libslic3r/GCode/ThumbnailData.hpp
+        src/main/jni/libslic3r/GCode/Thumbnails.cpp
+        src/main/jni/libslic3r/GCode/Thumbnails.hpp
+        src/main/jni/libslic3r/GCode/ToolOrdering.cpp
+        src/main/jni/libslic3r/GCode/ToolOrdering.hpp
+        src/main/jni/libslic3r/GCode/WipeTower2.cpp
+        src/main/jni/libslic3r/GCode/WipeTower2.hpp
+        src/main/jni/libslic3r/GCode/WipeTower.cpp
+        src/main/jni/libslic3r/GCode/WipeTower.hpp
+        src/main/jni/libslic3r/GCodeWriter.cpp
+        src/main/jni/libslic3r/GCodeWriter.hpp
         src/main/jni/libslic3r/Geometry/ArcWelder.hpp
+        src/main/jni/libslic3r/Geometry/ArcWelder.cpp
         src/main/jni/libslic3r/Geometry/Bicubic.hpp
         src/main/jni/libslic3r/Geometry/Circle.cpp
         src/main/jni/libslic3r/Geometry/Circle.hpp
         src/main/jni/libslic3r/Geometry/ConvexHull.cpp
         src/main/jni/libslic3r/Geometry/ConvexHull.hpp
+        src/main/jni/libslic3r/Geometry.cpp
         src/main/jni/libslic3r/Geometry/Curves.hpp
+        src/main/jni/libslic3r/Geometry.hpp
         src/main/jni/libslic3r/Geometry/MedialAxis.cpp
         src/main/jni/libslic3r/Geometry/MedialAxis.hpp
+        src/main/jni/libslic3r/Geometry/Voronoi.cpp
         src/main/jni/libslic3r/Geometry/Voronoi.hpp
         src/main/jni/libslic3r/Geometry/VoronoiOffset.cpp
         src/main/jni/libslic3r/Geometry/VoronoiOffset.hpp
-        src/main/jni/libslic3r/Geometry/VoronoiUtils.hpp
+        src/main/jni/libslic3r/Geometry/VoronoiUtilsCgal.cpp
+        src/main/jni/libslic3r/Geometry/VoronoiUtilsCgal.hpp
         src/main/jni/libslic3r/Geometry/VoronoiUtils.cpp
+        src/main/jni/libslic3r/Geometry/VoronoiUtils.hpp
         src/main/jni/libslic3r/Geometry/VoronoiVisualUtils.hpp
         src/main/jni/libslic3r/Int128.hpp
-        src/main/jni/libslic3r/JumpPointSearch.cpp
-        src/main/jni/libslic3r/JumpPointSearch.hpp
         src/main/jni/libslic3r/KDTreeIndirect.hpp
         src/main/jni/libslic3r/Layer.cpp
         src/main/jni/libslic3r/Layer.hpp
-        src/main/jni/libslic3r/LayerRegion.hpp
         src/main/jni/libslic3r/LayerRegion.cpp
+        src/main/jni/libslic3r/libslic3r.cpp
         src/main/jni/libslic3r/libslic3r.h
         src/main/jni/libslic3r/Line.cpp
         src/main/jni/libslic3r/Line.hpp
-        src/main/jni/libslic3r/BlacklistedLibraryCheck.cpp
-        src/main/jni/libslic3r/BlacklistedLibraryCheck.hpp
         src/main/jni/libslic3r/LocalesUtils.cpp
         src/main/jni/libslic3r/LocalesUtils.hpp
-        src/main/jni/libslic3r/CutUtils.cpp
-        src/main/jni/libslic3r/CutUtils.hpp
+        src/main/jni/libslic3r/MarchingSquares.hpp
+        src/main/jni/libslic3r/Measure.cpp
+        src/main/jni/libslic3r/Measure.hpp
+        src/main/jni/libslic3r/MeasureUtils.hpp
+        src/main/jni/libslic3r/MeshSplitImpl.hpp
+        src/main/jni/libslic3r/MinAreaBoundingBox.cpp
+        src/main/jni/libslic3r/MinAreaBoundingBox.hpp
+        src/main/jni/libslic3r/MinimumSpanningTree.cpp
+        src/main/jni/libslic3r/MinimumSpanningTree.hpp
+        src/main/jni/libslic3r/miniz_extension.cpp
+        src/main/jni/libslic3r/miniz_extension.hpp
+        src/main/jni/libslic3r/ModelArrange.cpp
+        src/main/jni/libslic3r/ModelArrange.hpp
         src/main/jni/libslic3r/Model.cpp
         src/main/jni/libslic3r/Model.hpp
-        src/main/jni/libslic3r/ModelArrange.hpp
-        src/main/jni/libslic3r/ModelArrange.cpp
+        src/main/jni/libslic3r/MTUtils.hpp
         src/main/jni/libslic3r/MultiMaterialSegmentation.cpp
         src/main/jni/libslic3r/MultiMaterialSegmentation.hpp
-        src/main/jni/libslic3r/MeshNormals.hpp
-        src/main/jni/libslic3r/MeshNormals.cpp
-        src/main/jni/libslic3r/Measure.hpp
-        src/main/jni/libslic3r/Measure.cpp
-        src/main/jni/libslic3r/MeasureUtils.hpp
-        src/main/jni/libslic3r/CustomGCode.cpp
-        src/main/jni/libslic3r/CustomGCode.hpp
-        src/main/jni/libslic3r/Arrange/Arrange.hpp
-        src/main/jni/libslic3r/Arrange/ArrangeImpl.hpp
-        src/main/jni/libslic3r/Arrange/Items/ArrangeItem.hpp
-        src/main/jni/libslic3r/Arrange/Items/ArrangeItem.cpp
-        src/main/jni/libslic3r/Arrange/Items/SimpleArrangeItem.hpp
-        src/main/jni/libslic3r/Arrange/Items/SimpleArrangeItem.cpp
-        src/main/jni/libslic3r/Arrange/Items/TrafoOnlyArrangeItem.hpp
-        src/main/jni/libslic3r/Arrange/Items/MutableItemTraits.hpp
-        src/main/jni/libslic3r/Arrange/Items/ArbitraryDataStore.hpp
-        src/main/jni/libslic3r/Arrange/ArrangeSettingsView.hpp
-        src/main/jni/libslic3r/Arrange/ArrangeSettingsDb_AppCfg.hpp
-        src/main/jni/libslic3r/Arrange/ArrangeSettingsDb_AppCfg.cpp
-        src/main/jni/libslic3r/Arrange/Scene.hpp
-        src/main/jni/libslic3r/Arrange/Scene.cpp
-        src/main/jni/libslic3r/Arrange/SceneBuilder.hpp
-        src/main/jni/libslic3r/Arrange/SceneBuilder.cpp
-        src/main/jni/libslic3r/Arrange/Tasks/ArrangeTask.hpp
-        src/main/jni/libslic3r/Arrange/Tasks/ArrangeTaskImpl.hpp
-        src/main/jni/libslic3r/Arrange/Tasks/FillBedTask.hpp
-        src/main/jni/libslic3r/Arrange/Tasks/FillBedTaskImpl.hpp
-        src/main/jni/libslic3r/Arrange/Tasks/MultiplySelectionTask.hpp
-        src/main/jni/libslic3r/Arrange/Tasks/MultiplySelectionTaskImpl.hpp
-        src/main/jni/libslic3r/Arrange/SegmentedRectangleBed.hpp
-        src/main/jni/libslic3r/Arrange/Core/ArrangeItemTraits.hpp
-        src/main/jni/libslic3r/Arrange/Core/DataStoreTraits.hpp
-        src/main/jni/libslic3r/Arrange/Core/ArrangeBase.hpp
-        src/main/jni/libslic3r/Arrange/Core/PackingContext.hpp
-        src/main/jni/libslic3r/Arrange/Core/ArrangeFirstFit.hpp
-        src/main/jni/libslic3r/Arrange/Core/Beds.hpp
-        src/main/jni/libslic3r/Arrange/Core/Beds.cpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/NFP.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/NFP.cpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/NFPConcave_CGAL.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/NFPConcave_CGAL.cpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/NFPConcave_Tesselate.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/NFPConcave_Tesselate.cpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/EdgeCache.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/EdgeCache.cpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/CircularEdgeIterator.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/NFPArrangeItemTraits.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/PackStrategyNFP.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/RectangleOverfitPackingStrategy.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/Kernels/KernelTraits.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/Kernels/GravityKernel.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/Kernels/TMArrangeKernel.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/Kernels/CompactifyKernel.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/Kernels/RectangleOverfitKernelWrapper.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/Kernels/SVGDebugOutputKernelWrapper.hpp
-        src/main/jni/libslic3r/Arrange/Core/NFP/Kernels/KernelUtils.hpp
         src/main/jni/libslic3r/MultiPoint.cpp
         src/main/jni/libslic3r/MultiPoint.hpp
+        src/main/jni/libslic3r/MutablePolygon.cpp
+        src/main/jni/libslic3r/MutablePolygon.hpp
         src/main/jni/libslic3r/MutablePriorityQueue.hpp
         src/main/jni/libslic3r/NormalUtils.cpp
         src/main/jni/libslic3r/NormalUtils.hpp
+        src/main/jni/libslic3r/MeshBoolean.cpp
+        src/main/jni/libslic3r/MeshBoolean.hpp
+        src/main/jni/libslic3r/CutSurface.cpp
+        src/main/jni/libslic3r/CutSurface.hpp
+        src/main/jni/libslic3r/TryCatchSignal.cpp
+        src/main/jni/libslic3r/TryCatchSignal.hpp
+        src/main/jni/libslic3r/IntersectionPoints.cpp
+        src/main/jni/libslic3r/IntersectionPoints.hpp
+        src/main/jni/libslic3r/OpenVDBUtils.cpp
+        src/main/jni/libslic3r/OpenVDBUtils.hpp
+        src/main/jni/libslic3r/Triangulation.cpp
+        src/main/jni/libslic3r/Triangulation.hpp
         src/main/jni/libslic3r/NSVGUtils.cpp
         src/main/jni/libslic3r/NSVGUtils.hpp
         src/main/jni/libslic3r/ObjectID.cpp
         src/main/jni/libslic3r/ObjectID.hpp
+        src/main/jni/libslic3r/Optimize/BruteforceOptimizer.hpp
+        src/main/jni/libslic3r/Optimize/NLoptOptimizer.hpp
+        src/main/jni/libslic3r/Optimize/Optimizer.hpp
+        src/main/jni/libslic3r/ParameterUtils.cpp
+        src/main/jni/libslic3r/ParameterUtils.hpp
+        src/main/jni/libslic3r/pchheader.cpp
+        src/main/jni/libslic3r/pchheader.hpp
         src/main/jni/libslic3r/PerimeterGenerator.cpp
         src/main/jni/libslic3r/PerimeterGenerator.hpp
         src/main/jni/libslic3r/PlaceholderParser.cpp
         src/main/jni/libslic3r/PlaceholderParser.hpp
         src/main/jni/libslic3r/Platform.cpp
         src/main/jni/libslic3r/Platform.hpp
+        src/main/jni/libslic3r/PNGReadWrite.cpp
+        src/main/jni/libslic3r/PNGReadWrite.hpp
         src/main/jni/libslic3r/Point.cpp
         src/main/jni/libslic3r/Point.hpp
         src/main/jni/libslic3r/Polygon.cpp
         src/main/jni/libslic3r/Polygon.hpp
-        src/main/jni/libslic3r/MutablePolygon.cpp
-        src/main/jni/libslic3r/MutablePolygon.hpp
         src/main/jni/libslic3r/PolygonTrimmer.cpp
         src/main/jni/libslic3r/PolygonTrimmer.hpp
         src/main/jni/libslic3r/Polyline.cpp
         src/main/jni/libslic3r/Polyline.hpp
-        src/main/jni/libslic3r/Preset.cpp
-        src/main/jni/libslic3r/Preset.hpp
         src/main/jni/libslic3r/PresetBundle.cpp
         src/main/jni/libslic3r/PresetBundle.hpp
-        src/main/jni/libslic3r/PrincipalComponents2D.hpp
+        src/main/jni/libslic3r/Preset.cpp
+        src/main/jni/libslic3r/Preset.hpp
         src/main/jni/libslic3r/PrincipalComponents2D.cpp
-        src/main/jni/libslic3r/AppConfig.cpp
-        src/main/jni/libslic3r/AppConfig.hpp
-        src/main/jni/libslic3r/Print.cpp
-        src/main/jni/libslic3r/Print.hpp
+        src/main/jni/libslic3r/PrincipalComponents2D.hpp
         src/main/jni/libslic3r/PrintApply.cpp
         src/main/jni/libslic3r/PrintBase.cpp
         src/main/jni/libslic3r/PrintBase.hpp
+        src/main/jni/libslic3r/MaterialType.cpp
+        src/main/jni/libslic3r/MaterialType.hpp
         src/main/jni/libslic3r/PrintConfig.cpp
         src/main/jni/libslic3r/PrintConfig.hpp
+        src/main/jni/libslic3r/Print.cpp
+        src/main/jni/libslic3r/Print.hpp
         src/main/jni/libslic3r/PrintObject.cpp
         src/main/jni/libslic3r/PrintObjectSlice.cpp
         src/main/jni/libslic3r/PrintRegion.cpp
-        src/main/jni/libslic3r/PointGrid.hpp
-        src/main/jni/libslic3r/PNGReadWrite.hpp
-        src/main/jni/libslic3r/PNGReadWrite.cpp
+        src/main/jni/libslic3r/ProjectTask.cpp
+        src/main/jni/libslic3r/ProjectTask.hpp
         src/main/jni/libslic3r/QuadricEdgeCollapse.cpp
         src/main/jni/libslic3r/QuadricEdgeCollapse.hpp
         src/main/jni/libslic3r/Semver.cpp
@@ -1053,41 +1072,69 @@ add_library(slic3r
         src/main/jni/libslic3r/ShortEdgeCollapse.hpp
         src/main/jni/libslic3r/ShortestPath.cpp
         src/main/jni/libslic3r/ShortestPath.hpp
+        src/main/jni/libslic3r/SLA/AGGRaster.hpp
+        src/main/jni/libslic3r/SLA/BoostAdapter.hpp
+        src/main/jni/libslic3r/SLA/Clustering.cpp
+        src/main/jni/libslic3r/SLA/Clustering.hpp
+        src/main/jni/libslic3r/SLA/ConcaveHull.cpp
+        src/main/jni/libslic3r/SLA/ConcaveHull.hpp
+        src/main/jni/libslic3r/SLA/Concurrency.hpp
+        src/main/jni/libslic3r/SLA/Hollowing.cpp
+        src/main/jni/libslic3r/SLA/Hollowing.hpp
+        src/main/jni/libslic3r/SLA/IndexedMesh.cpp
+        src/main/jni/libslic3r/SLA/IndexedMesh.hpp
+        src/main/jni/libslic3r/SLA/JobController.hpp
+        src/main/jni/libslic3r/SLA/Pad.cpp
+        src/main/jni/libslic3r/SLA/Pad.hpp
         src/main/jni/libslic3r/SLAPrint.cpp
+        src/main/jni/libslic3r/SLAPrint.hpp
         src/main/jni/libslic3r/SLAPrintSteps.cpp
         src/main/jni/libslic3r/SLAPrintSteps.hpp
-        src/main/jni/libslic3r/SLAPrint.hpp
-        src/main/jni/libslic3r/Slicing.cpp
-        src/main/jni/libslic3r/Slicing.hpp
-        src/main/jni/libslic3r/SlicesToTriangleMesh.hpp
+        src/main/jni/libslic3r/SLA/RasterBase.cpp
+        src/main/jni/libslic3r/SLA/RasterBase.hpp
+        src/main/jni/libslic3r/SLA/RasterToPolygons.cpp
+        src/main/jni/libslic3r/SLA/RasterToPolygons.hpp
+        src/main/jni/libslic3r/SLA/ReprojectPointsOnMesh.hpp
+        src/main/jni/libslic3r/SLA/Rotfinder.cpp
+        src/main/jni/libslic3r/SLA/Rotfinder.hpp
+        src/main/jni/libslic3r/SLA/SpatIndex.cpp
+        src/main/jni/libslic3r/SLA/SpatIndex.hpp
+        src/main/jni/libslic3r/SLA/SupportPointGenerator.cpp
+        src/main/jni/libslic3r/SLA/SupportPointGenerator.hpp
+        src/main/jni/libslic3r/SLA/SupportPoint.hpp
+        src/main/jni/libslic3r/SLA/SupportTreeBuilder.cpp
+        src/main/jni/libslic3r/SLA/SupportTreeBuilder.hpp
+        src/main/jni/libslic3r/SLA/SupportTreeBuildsteps.cpp
+        src/main/jni/libslic3r/SLA/SupportTreeBuildsteps.hpp
+        src/main/jni/libslic3r/SLA/SupportTree.cpp
+        src/main/jni/libslic3r/SLA/SupportTree.hpp
+        src/main/jni/libslic3r/SLA/SupportTreeMesher.cpp
+        src/main/jni/libslic3r/SLA/SupportTreeMesher.hpp
         src/main/jni/libslic3r/SlicesToTriangleMesh.cpp
+        src/main/jni/libslic3r/SlicesToTriangleMesh.hpp
         src/main/jni/libslic3r/SlicingAdaptive.cpp
         src/main/jni/libslic3r/SlicingAdaptive.hpp
-        src/main/jni/libslic3r/Subdivide.cpp
-        src/main/jni/libslic3r/Subdivide.hpp
+        src/main/jni/libslic3r/Slicing.cpp
+        src/main/jni/libslic3r/Slicing.hpp
         src/main/jni/libslic3r/Support/SupportCommon.cpp
         src/main/jni/libslic3r/Support/SupportCommon.hpp
-        src/main/jni/libslic3r/Support/SupportDebug.cpp
-        src/main/jni/libslic3r/Support/SupportDebug.hpp
         src/main/jni/libslic3r/Support/SupportLayer.hpp
         src/main/jni/libslic3r/Support/SupportMaterial.cpp
         src/main/jni/libslic3r/Support/SupportMaterial.hpp
-        src/main/jni/libslic3r/Support/SupportParameters.cpp
         src/main/jni/libslic3r/Support/SupportParameters.hpp
-        src/main/jni/libslic3r/Support/OrganicSupport.cpp
-        src/main/jni/libslic3r/Support/OrganicSupport.hpp
-        src/main/jni/libslic3r/Support/TreeSupport.cpp
-        src/main/jni/libslic3r/Support/TreeSupport.hpp
-        src/main/jni/libslic3r/Support/TreeSupportCommon.cpp
-        src/main/jni/libslic3r/Support/TreeSupportCommon.hpp
+        src/main/jni/libslic3r/Support/SupportSpotsGenerator.cpp
+        src/main/jni/libslic3r/Support/SupportSpotsGenerator.hpp
         src/main/jni/libslic3r/Support/TreeModelVolumes.cpp
         src/main/jni/libslic3r/Support/TreeModelVolumes.hpp
-        src/main/jni/libslic3r/SupportSpotsGenerator.cpp
-        src/main/jni/libslic3r/SupportSpotsGenerator.hpp
-        src/main/jni/libslic3r/Surface.cpp
-        src/main/jni/libslic3r/Surface.hpp
+        src/main/jni/libslic3r/Support/TreeSupport3D.cpp
+        src/main/jni/libslic3r/Support/TreeSupport3D.hpp
+        src/main/jni/libslic3r/Support/TreeSupportCommon.hpp
+        src/main/jni/libslic3r/Support/TreeSupport.cpp
+        src/main/jni/libslic3r/Support/TreeSupport.hpp
         src/main/jni/libslic3r/SurfaceCollection.cpp
         src/main/jni/libslic3r/SurfaceCollection.hpp
+        src/main/jni/libslic3r/Surface.cpp
+        src/main/jni/libslic3r/Surface.hpp
         src/main/jni/libslic3r/SurfaceMesh.hpp
         src/main/jni/libslic3r/SVG.cpp
         src/main/jni/libslic3r/SVG.hpp
@@ -1095,153 +1142,43 @@ add_library(slic3r
         src/main/jni/libslic3r/Tesselate.cpp
         src/main/jni/libslic3r/Tesselate.hpp
         src/main/jni/libslic3r/TextConfiguration.hpp
-        src/main/jni/libslic3r/TriangleMesh.cpp
-        src/main/jni/libslic3r/TriangleMesh.hpp
-        src/main/jni/libslic3r/TriangleMeshSlicer.cpp
-        src/main/jni/libslic3r/TriangleMeshSlicer.hpp
-        src/main/jni/libslic3r/MeshSplitImpl.hpp
-        src/main/jni/libslic3r/TriangulateWall.hpp
-        src/main/jni/libslic3r/utils.cpp
-        src/main/jni/libslic3r/Utils.hpp
+        src/main/jni/libslic3r/Thread.cpp
+        src/main/jni/libslic3r/Thread.hpp
         src/main/jni/libslic3r/Time.cpp
         src/main/jni/libslic3r/Time.hpp
         src/main/jni/libslic3r/Timer.cpp
         src/main/jni/libslic3r/Timer.hpp
-        src/main/jni/libslic3r/Thread.cpp
-        src/main/jni/libslic3r/Thread.hpp
+        src/main/jni/libslic3r/TriangleMesh.cpp
+        src/main/jni/libslic3r/TriangleMesh.hpp
+        src/main/jni/libslic3r/TriangleMeshSlicer.cpp
+        src/main/jni/libslic3r/TriangleMeshSlicer.hpp
         src/main/jni/libslic3r/TriangleSelector.cpp
         src/main/jni/libslic3r/TriangleSelector.hpp
         src/main/jni/libslic3r/TriangleSetSampling.cpp
         src/main/jni/libslic3r/TriangleSetSampling.hpp
-        src/main/jni/libslic3r/TriangleSelectorWrapper.cpp
-        src/main/jni/libslic3r/TriangleSelectorWrapper.hpp
-        src/main/jni/libslic3r/MTUtils.hpp
-        src/main/jni/libslic3r/Zipper.hpp
+        src/main/jni/libslic3r/TriangulateWall.cpp
+        src/main/jni/libslic3r/TriangulateWall.hpp
+        src/main/jni/libslic3r/utils.cpp
+        src/main/jni/libslic3r/Utils.hpp
+        src/main/jni/libslic3r/VariableWidth.cpp
+        src/main/jni/libslic3r/VariableWidth.hpp
         src/main/jni/libslic3r/Zipper.cpp
-        src/main/jni/libslic3r/MinAreaBoundingBox.hpp
-        src/main/jni/libslic3r/MinAreaBoundingBox.cpp
-        src/main/jni/libslic3r/miniz_extension.hpp
-        src/main/jni/libslic3r/miniz_extension.cpp
-        src/main/jni/libslic3r/MarchingSquares.hpp
-        src/main/jni/libslic3r/Execution/Execution.hpp
-        src/main/jni/libslic3r/Execution/ExecutionSeq.hpp
-        src/main/jni/libslic3r/Execution/ExecutionTBB.hpp
-        src/main/jni/libslic3r/Optimize/Optimizer.hpp
-        src/main/jni/libslic3r/Optimize/NLoptOptimizer.hpp
-        src/main/jni/libslic3r/Optimize/BruteforceOptimizer.hpp
-        src/main/jni/libslic3r/OpenVDBUtils.cpp
-        src/main/jni/libslic3r/OpenVDBUtils.hpp
-        src/main/jni/libslic3r/OpenVDBUtilsLegacy.hpp
-        src/main/jni/libslic3r/SLA/Pad.hpp
-        src/main/jni/libslic3r/SLA/Pad.cpp
-        src/main/jni/libslic3r/SLA/SupportTreeBuilder.hpp
-        src/main/jni/libslic3r/SLA/SupportTreeMesher.hpp
-        src/main/jni/libslic3r/SLA/SupportTreeMesher.cpp
-        src/main/jni/libslic3r/SLA/SupportTreeUtils.hpp
-        src/main/jni/libslic3r/SLA/SupportTreeUtilsLegacy.hpp
-        src/main/jni/libslic3r/SLA/SupportTreeBuilder.cpp
-        src/main/jni/libslic3r/SLA/SupportTree.hpp
-        src/main/jni/libslic3r/SLA/SupportTree.cpp
-        src/main/jni/libslic3r/SLA/SupportTreeStrategies.hpp
-        src/main/jni/libslic3r/SLA/Rotfinder.hpp
-        src/main/jni/libslic3r/SLA/Rotfinder.cpp
-        src/main/jni/libslic3r/SLA/SpatIndex.hpp
-        src/main/jni/libslic3r/SLA/SpatIndex.cpp
-        src/main/jni/libslic3r/SLA/RasterBase.hpp
-        src/main/jni/libslic3r/SLA/RasterBase.cpp
-        src/main/jni/libslic3r/SLA/AGGRaster.hpp
-        src/main/jni/libslic3r/SLA/RasterToPolygons.hpp
-        src/main/jni/libslic3r/SLA/RasterToPolygons.cpp
-        src/main/jni/libslic3r/SLA/ConcaveHull.hpp
-        src/main/jni/libslic3r/SLA/ConcaveHull.cpp
-        src/main/jni/libslic3r/SLA/Hollowing.hpp
-        src/main/jni/libslic3r/SLA/Hollowing.cpp
-        src/main/jni/libslic3r/SLA/JobController.hpp
-        src/main/jni/libslic3r/SLA/SupportPoint.hpp
-        src/main/jni/libslic3r/SLA/SupportPointGenerator.hpp
-        src/main/jni/libslic3r/SLA/SupportPointGenerator.cpp
-        src/main/jni/libslic3r/SLA/Clustering.hpp
-        src/main/jni/libslic3r/SLA/Clustering.cpp
-        src/main/jni/libslic3r/SLA/ReprojectPointsOnMesh.hpp
-        src/main/jni/libslic3r/SLA/DefaultSupportTree.hpp
-        src/main/jni/libslic3r/SLA/DefaultSupportTree.cpp
-        src/main/jni/libslic3r/SLA/BranchingTreeSLA.hpp
-        src/main/jni/libslic3r/SLA/BranchingTreeSLA.cpp
-        src/main/jni/libslic3r/SLA/ZCorrection.hpp
-        src/main/jni/libslic3r/SLA/ZCorrection.cpp
-        src/main/jni/libslic3r/BranchingTree/BranchingTree.cpp
-        src/main/jni/libslic3r/BranchingTree/BranchingTree.hpp
-        src/main/jni/libslic3r/BranchingTree/PointCloud.cpp
-        src/main/jni/libslic3r/BranchingTree/PointCloud.hpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/BeadingStrategy.hpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/BeadingStrategy.cpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/BeadingStrategyFactory.hpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/BeadingStrategyFactory.cpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/DistributedBeadingStrategy.hpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/DistributedBeadingStrategy.cpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/LimitedBeadingStrategy.hpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/LimitedBeadingStrategy.cpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/OuterWallInsetBeadingStrategy.hpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/OuterWallInsetBeadingStrategy.cpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/RedistributeBeadingStrategy.hpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/RedistributeBeadingStrategy.cpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/WideningBeadingStrategy.hpp
-        src/main/jni/libslic3r/Arachne/BeadingStrategy/WideningBeadingStrategy.cpp
-        src/main/jni/libslic3r/Arachne/utils/ExtrusionJunction.hpp
-        src/main/jni/libslic3r/Arachne/utils/ExtrusionLine.hpp
-        src/main/jni/libslic3r/Arachne/utils/ExtrusionLine.cpp
-        src/main/jni/libslic3r/Arachne/utils/HalfEdge.hpp
-        src/main/jni/libslic3r/Arachne/utils/HalfEdgeGraph.hpp
-        src/main/jni/libslic3r/Arachne/utils/HalfEdgeNode.hpp
-        src/main/jni/libslic3r/Arachne/utils/SparseGrid.hpp
-        src/main/jni/libslic3r/Arachne/utils/SparsePointGrid.hpp
-        src/main/jni/libslic3r/Arachne/utils/SparseLineGrid.hpp
-        src/main/jni/libslic3r/Arachne/utils/SquareGrid.hpp
-        src/main/jni/libslic3r/Arachne/utils/SquareGrid.cpp
-        src/main/jni/libslic3r/Arachne/utils/PolygonsPointIndex.hpp
-        src/main/jni/libslic3r/Arachne/utils/PolygonsSegmentIndex.hpp
-        src/main/jni/libslic3r/Arachne/utils/PolylineStitcher.hpp
-        src/main/jni/libslic3r/Arachne/utils/PolylineStitcher.cpp
-        src/main/jni/libslic3r/Geometry/Voronoi.cpp
-        src/main/jni/libslic3r/Geometry/VoronoiUtils.hpp
-        src/main/jni/libslic3r/Geometry/VoronoiUtils.cpp
-        src/main/jni/libslic3r/Arachne/PerimeterOrder.hpp
-        src/main/jni/libslic3r/Arachne/PerimeterOrder.cpp
-        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidation.hpp
-        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidation.cpp
-        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidationEdge.hpp
-        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidationGraph.hpp
-        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidationGraph.cpp
-        src/main/jni/libslic3r/Arachne/SkeletalTrapezoidationJoint.hpp
-        src/main/jni/libslic3r/Arachne/WallToolPaths.hpp
-        src/main/jni/libslic3r/Arachne/WallToolPaths.cpp
-        src/main/jni/libslic3r/StaticMap.hpp
-        src/main/jni/libslic3r/ProfilesSharingUtils.hpp
-        src/main/jni/libslic3r/ProfilesSharingUtils.cpp
-        src/main/jni/libslic3r/Utils/DirectoriesUtils.hpp
-        src/main/jni/libslic3r/Utils/DirectoriesUtils.cpp
-        src/main/jni/libslic3r/Utils/JsonUtils.hpp
-        src/main/jni/libslic3r/Utils/JsonUtils.cpp
-
-        # libslic3r_cgal
-        src/main/jni/libslic3r/CutSurface.hpp
-        src/main/jni/libslic3r/CutSurface.cpp
-        src/main/jni/libslic3r/Geometry/VoronoiUtilsCgal.hpp
-        src/main/jni/libslic3r/Geometry/VoronoiUtilsCgal.cpp
-        src/main/jni/libslic3r/IntersectionPoints.hpp
-        src/main/jni/libslic3r/IntersectionPoints.cpp
-        src/main/jni/libslic3r/MeshBoolean.hpp
-        src/main/jni/libslic3r/MeshBoolean.cpp
-        src/main/jni/libslic3r/TryCatchSignal.hpp
-        src/main/jni/libslic3r/TryCatchSignal.cpp
-        src/main/jni/libslic3r/Triangulation.hpp
-        src/main/jni/libslic3r/Triangulation.cpp
+        src/main/jni/libslic3r/Zipper.hpp
+        src/main/jni/libslic3r/FilamentGroup.hpp
+        src/main/jni/libslic3r/FilamentGroup.cpp
+        src/main/jni/libslic3r/FilamentGroupUtils.hpp
+        src/main/jni/libslic3r/FilamentGroupUtils.cpp
+        src/main/jni/libslic3r/GCode/ToolOrderUtils.hpp
+        src/main/jni/libslic3r/GCode/ToolOrderUtils.cpp
+        src/main/jni/libslic3r/FlushVolPredictor.hpp
+        src/main/jni/libslic3r/FlushVolPredictor.cpp
 
         src/main/jni/libnest2d/src/libnest2d.cpp
 
         src/main/jni/bbl/Orient.cpp
 
         src/main/jni/slicebeam/beam_native.cpp
+        src/main/jni/slicebeam/engine_compat.cpp
         src/main/jni/slicebeam/GLModel.cpp
         src/main/jni/slicebeam/GLShader.cpp
 
@@ -1313,6 +1250,7 @@ target_link_libraries(slic3r PRIVATE
         heatshrink
         jpeg-static
         OCCTWrapper
+        mcut
         BGCode_core
         BGCode_binarize
         BGCode_convert

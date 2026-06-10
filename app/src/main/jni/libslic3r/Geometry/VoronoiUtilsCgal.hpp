@@ -1,9 +1,8 @@
-///|/ Copyright (c) Prusa Research 2022 Lukáš Hejl @hejllukas, Vojtěch Bubník @bubnikv
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_VoronoiUtilsCgal_hpp_
 #define slic3r_VoronoiUtilsCgal_hpp_
+
+#include <boost/polygon/polygon.hpp>
+#include <iterator>
 
 #include "Voronoi.hpp"
 #include "../Arachne/utils/PolygonsSegmentIndex.hpp"

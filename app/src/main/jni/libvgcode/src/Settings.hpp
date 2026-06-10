@@ -20,6 +20,9 @@ struct Settings
 		ETimeMode time_mode{ ETimeMode::Normal };
 		bool top_layer_only_view_range{ false };
 		bool spiral_vase_mode{ false };
+		int infill_visibility_depth{ -1 };
+		bool fast_mode{ false };
+		int selected_object_id{ -1 };
 		//
 		// Required update flags
 		//

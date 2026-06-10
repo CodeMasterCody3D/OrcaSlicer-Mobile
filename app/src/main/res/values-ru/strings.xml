@@ -170,7 +170,7 @@
     <string name="SettingsInterfaceResolutionScale">Масштаб разрешения 3D</string>
     <string name="SettingsInterfaceResolutionScaleDescription">Может увеличить производительность путём снижения разрешения</string>
     <string name="SettingsAbout">О приложении</string>
-    <string name="SettingsAboutVersion">v%s\nОсновано на PrusaSlicer\n\nCreated by YTKAB0BP</string>
+    <string name="SettingsAboutVersion">v%s\nOrcaSlicer Mobile bootstrap\nОсновано на Slice Beam, PrusaSlicer, Slic3r и OrcaSlicer-совместимых профилях\n\nСоздано YTKAB0BP</string>
     <string name="SettingsProfileCopy">%s - Копия</string>
     <string name="SettingsCloneProfile">Клон. текущий</string>
     <string name="SettingsDeleteProfile">Удалить текущий</string>

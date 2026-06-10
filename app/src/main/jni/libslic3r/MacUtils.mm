@@ -1,14 +1,23 @@
-#import "Utils/DirectoriesUtils.hpp"
-
 #import <Foundation/Foundation.h>
+#import "MacUtils.hpp"
 
-// Utils/DirectoriesUtils.hpp
-std::string GetDataDir()
+namespace Slic3r {
+
+bool is_macos_support_boost_add_file_log()
 {
-	NSURL* url = [[NSFileManager defaultManager] URLForDirectory:NSApplicationSupportDirectory
-												 inDomain:NSUserDomainMask
-												 appropriateForURL:nil create:NO error:nil];
-
-	return std::string([url.path UTF8String]);
+    if (@available(macOS 12.0, *)) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
+int is_mac_version_15()
+{
+    if (@available(macOS 15.0, *)) {//This code runs on macOS 15 or later.
+        return true;
+    } else {
+        return false;
+    }
+}
+}; // namespace Slic3r

@@ -21,6 +21,7 @@
 #include "BRepBuilderAPI_Transform.hxx"
 #include "TopExp_Explorer.hxx"
 #include "BRep_Tool.hxx"
+#include <TDF_LabelSequence.hxx>
 
 const double STEP_TRANS_CHORD_ERROR = 0.005;
 const double STEP_TRANS_ANGLE_RES = 1;

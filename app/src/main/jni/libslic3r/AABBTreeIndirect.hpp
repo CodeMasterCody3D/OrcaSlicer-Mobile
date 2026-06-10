@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2020 - 2023 Vojtěch Bubník @bubnikv, Pavel Mikuš @Godrak, Tomáš Mészáros @tamasmeszaros, Lukáš Matěna @lukasmatena, Lukáš Hejl @hejllukas
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 // AABB tree built upon external data set, referencing the external data by integer indices.
 // The AABB tree balancing and traversal (ray casting, closest triangle of an indexed triangle mesh)
 // were adapted from libigl AABB.{cpp,hpp} Copyright (C) 2015 Alec Jacobson <alecjacobson@gmail.com>
@@ -233,7 +229,7 @@ public:
         m_bbox(bbox.min - Point(SCALED_EPSILON, SCALED_EPSILON), bbox.max + Point(SCALED_EPSILON, SCALED_EPSILON)) {}
     size_t             idx() const { return m_idx; }
     const BoundingBox& bbox() const { return m_bbox; }
-    Point              centroid() const { return ((m_bbox.min().cast<int64_t>() + m_bbox.max().cast<int64_t>()) / 2).cast<int32_t>(); }
+    Point              centroid() const { return (m_bbox.min() + m_bbox.max() / 2); }
 private:
     size_t             m_idx;
     BoundingBox		   m_bbox;
@@ -401,7 +397,7 @@ namespace detail {
         RayIntersectorType 	   &ray_intersector,
         size_t 				    node_idx,
         Scalar                  min_t,
-        igl::Hit 			   &hit)
+        igl::Hit		   &hit)
 	{
         const auto &node = ray_intersector.tree.node(node_idx);
         assert(node.is_valid());
@@ -736,7 +732,7 @@ inline bool intersect_ray_first_hit(
 	// Direction of the ray.
 	const VectorType 					&dir,
 	// First intersection of the ray with the indexed triangle set.
-	igl::Hit 							&hit,
+	igl::Hit 					&hit,
 	// Epsilon for the ray-triangle intersection, it should be proportional to an average triangle edge length.
 	const double 						 eps = 0.000001)
 {

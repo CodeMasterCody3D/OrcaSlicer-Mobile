@@ -11,24 +11,30 @@ libvgcode::Vec3 libvgcode_convert_vec3f(const Slic3r::Vec3f& v) {
     return { v.x(), v.y(), v.z() };
 }
 
-libvgcode::EGCodeExtrusionRole libvgcode_convert_extrusion_role(Slic3r::GCodeExtrusionRole role) {
+// The OrcaSlicer engine uses Slic3r::ExtrusionRole (er* enum from ExtrusionEntity.hpp) instead of
+// PrusaSlicer's GCodeExtrusionRole. Roles with no libvgcode equivalent are mapped to the closest match.
+libvgcode::EGCodeExtrusionRole libvgcode_convert_extrusion_role(Slic3r::ExtrusionRole role) {
     switch (role) {
-        case Slic3r::GCodeExtrusionRole::None:                     { return libvgcode::EGCodeExtrusionRole::None; }
-        case Slic3r::GCodeExtrusionRole::Perimeter:                { return libvgcode::EGCodeExtrusionRole::Perimeter; }
-        case Slic3r::GCodeExtrusionRole::ExternalPerimeter:        { return libvgcode::EGCodeExtrusionRole::ExternalPerimeter; }
-        case Slic3r::GCodeExtrusionRole::OverhangPerimeter:        { return libvgcode::EGCodeExtrusionRole::OverhangPerimeter; }
-        case Slic3r::GCodeExtrusionRole::InternalInfill:           { return libvgcode::EGCodeExtrusionRole::InternalInfill; }
-        case Slic3r::GCodeExtrusionRole::SolidInfill:              { return libvgcode::EGCodeExtrusionRole::SolidInfill; }
-        case Slic3r::GCodeExtrusionRole::TopSolidInfill:           { return libvgcode::EGCodeExtrusionRole::TopSolidInfill; }
-        case Slic3r::GCodeExtrusionRole::Ironing:                  { return libvgcode::EGCodeExtrusionRole::Ironing; }
-        case Slic3r::GCodeExtrusionRole::BridgeInfill:             { return libvgcode::EGCodeExtrusionRole::BridgeInfill; }
-        case Slic3r::GCodeExtrusionRole::GapFill:                  { return libvgcode::EGCodeExtrusionRole::GapFill; }
-        case Slic3r::GCodeExtrusionRole::Skirt:                    { return libvgcode::EGCodeExtrusionRole::Skirt; }
-        case Slic3r::GCodeExtrusionRole::SupportMaterial:          { return libvgcode::EGCodeExtrusionRole::SupportMaterial; }
-        case Slic3r::GCodeExtrusionRole::SupportMaterialInterface: { return libvgcode::EGCodeExtrusionRole::SupportMaterialInterface; }
-        case Slic3r::GCodeExtrusionRole::WipeTower:                { return libvgcode::EGCodeExtrusionRole::WipeTower; }
-        case Slic3r::GCodeExtrusionRole::Custom:                   { return libvgcode::EGCodeExtrusionRole::Custom; }
-        default:                                                   { return libvgcode::EGCodeExtrusionRole::None; }
+        case Slic3r::erNone:                      { return libvgcode::EGCodeExtrusionRole::None; }
+        case Slic3r::erPerimeter:                 { return libvgcode::EGCodeExtrusionRole::Perimeter; }
+        case Slic3r::erExternalPerimeter:         { return libvgcode::EGCodeExtrusionRole::ExternalPerimeter; }
+        case Slic3r::erOverhangPerimeter:         { return libvgcode::EGCodeExtrusionRole::OverhangPerimeter; }
+        case Slic3r::erInternalInfill:            { return libvgcode::EGCodeExtrusionRole::InternalInfill; }
+        case Slic3r::erSolidInfill:               { return libvgcode::EGCodeExtrusionRole::SolidInfill; }
+        case Slic3r::erTopSolidInfill:            { return libvgcode::EGCodeExtrusionRole::TopSolidInfill; }
+        case Slic3r::erBottomSurface:             { return libvgcode::EGCodeExtrusionRole::SolidInfill; }
+        case Slic3r::erIroning:                   { return libvgcode::EGCodeExtrusionRole::Ironing; }
+        case Slic3r::erBridgeInfill:              { return libvgcode::EGCodeExtrusionRole::BridgeInfill; }
+        case Slic3r::erInternalBridgeInfill:      { return libvgcode::EGCodeExtrusionRole::BridgeInfill; }
+        case Slic3r::erGapFill:                   { return libvgcode::EGCodeExtrusionRole::GapFill; }
+        case Slic3r::erSkirt:                     { return libvgcode::EGCodeExtrusionRole::Skirt; }
+        case Slic3r::erBrim:                      { return libvgcode::EGCodeExtrusionRole::Skirt; }
+        case Slic3r::erSupportMaterial:           { return libvgcode::EGCodeExtrusionRole::SupportMaterial; }
+        case Slic3r::erSupportMaterialInterface:  { return libvgcode::EGCodeExtrusionRole::SupportMaterialInterface; }
+        case Slic3r::erSupportTransition:         { return libvgcode::EGCodeExtrusionRole::SupportMaterialInterface; }
+        case Slic3r::erWipeTower:                 { return libvgcode::EGCodeExtrusionRole::WipeTower; }
+        case Slic3r::erCustom:                    { return libvgcode::EGCodeExtrusionRole::Custom; }
+        default:                                  { return libvgcode::EGCodeExtrusionRole::None; }
     }
 }
 
@@ -91,7 +97,8 @@ libvgcode::GCodeInputData libvgcode_convert_input_data(const Slic3r::GCodeProces
                 const libvgcode::PathVertex vertex = { libvgcode_convert_vec3f(prev.position), curr.height, curr.width, curr.feedrate, prev.actual_feedrate,
                                                        curr.mm3_per_mm, curr.fan_speed, curr.temperature, libvgcode_convert_extrusion_role(curr.extrusion_role), curr_type,
                                                        static_cast<uint32_t>(curr.gcode_id), static_cast<uint32_t>(curr.layer_id),
-                                                       static_cast<uint8_t>(curr.extruder_id), static_cast<uint8_t>(curr.cp_color_id), { 0.0f, 0.0f } };
+                                                       static_cast<uint8_t>(curr.extruder_id), static_cast<uint8_t>(curr.cp_color_id),
+                                                       curr.object_label_id, { 0.0f, 0.0f } };
                 ret.vertices.emplace_back(vertex);
             }
         }
@@ -99,7 +106,8 @@ libvgcode::GCodeInputData libvgcode_convert_input_data(const Slic3r::GCodeProces
         const libvgcode::PathVertex vertex = { libvgcode_convert_vec3f(curr.position), curr.height, curr.width, curr.feedrate, curr.actual_feedrate,
                                                curr.mm3_per_mm, curr.fan_speed, curr.temperature, libvgcode_convert_extrusion_role(curr.extrusion_role), curr_type,
                                                static_cast<uint32_t>(curr.gcode_id), static_cast<uint32_t>(curr.layer_id),
-                                               static_cast<uint8_t>(curr.extruder_id), static_cast<uint8_t>(curr.cp_color_id), curr.time };
+                                               static_cast<uint8_t>(curr.extruder_id), static_cast<uint8_t>(curr.cp_color_id),
+                                               curr.object_label_id, curr.time };
         ret.vertices.emplace_back(vertex);
     }
     ret.vertices.shrink_to_fit();

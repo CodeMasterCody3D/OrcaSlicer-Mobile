@@ -26,9 +26,11 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 
+#include <string>
 #include <vector>
-#include <Eigen/Geometry> 
+#include <Eigen/Geometry>
 
 // Size of the binary STL header, free form.
 #define LABEL_SIZE             80
@@ -153,9 +155,65 @@ struct stl_file {
 	stl_stats     					stats;
 };
 
+// BBS: per-face property used by the BBS/Orca 3MF format (e.g. small overhang / hole tagging).
+typedef enum {
+    eNormal,              // normal face
+    eSmallOverhang,       // small overhang
+    eSmallHole,           // face with small hole
+    eExteriorAppearance,  // exterior appearance
+    eMaxNumFaceTypes
+} EnumFaceTypes;
+
+struct FaceProperty
+{   // triangle face property
+    EnumFaceTypes type;
+    double area;
+
+    std::string to_string() const
+    {
+        std::string str;
+        // skip normal type facet to improve performance
+        if (type > eNormal && type < eMaxNumFaceTypes) {
+            str += std::to_string(type);
+            if (area != 0.f)
+                str += " " + std::to_string(area);
+        }
+        return str;
+    }
+
+    void from_string(const std::string& str)
+    {
+        std::string area_str;
+        do {
+            if (str.empty())
+                break;
+
+            this->type = (EnumFaceTypes)std::atoi(str.c_str());
+            if (this->type <= eNormal || this->type >= eMaxNumFaceTypes)
+                break;
+
+            size_t type_end_pos = str.find(" ");
+            if (type_end_pos == std::string::npos) {
+                this->area = 0.f;
+                return;
+            }
+
+            area_str = str.substr(type_end_pos + 1);
+            if (!area_str.empty())
+                this->area = std::atof(area_str.c_str());
+            else
+                this->area = 0.f;
+            return;
+        } while (0);
+
+        this->type = eNormal;
+        this->area = 0.f;
+    }
+};
+
 struct indexed_triangle_set
 {
-	void clear() { indices.clear(); vertices.clear(); }
+	void clear() { indices.clear(); vertices.clear(); properties.clear(); }
 
 	size_t memsize() const {
 		return sizeof(*this) + sizeof(stl_triangle_vertex_indices) * indices.size() + sizeof(stl_vertex) * vertices.size();
@@ -163,6 +221,8 @@ struct indexed_triangle_set
 
 	std::vector<stl_triangle_vertex_indices> 	indices;
     std::vector<stl_vertex>       				vertices;
+    //BBS
+    std::vector<FaceProperty>                   properties;
 
     bool empty() const { return indices.empty() || vertices.empty(); }
     bool operator==(const indexed_triangle_set& other) const { return this->indices == other.indices && this->vertices == other.vertices; }

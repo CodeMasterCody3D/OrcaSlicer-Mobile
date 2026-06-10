@@ -1,11 +1,8 @@
-///|/ Copyright (c) Prusa Research 2020 - 2021 Vojtěch Bubník @bubnikv, David Kocík @kocikdav
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef _libslic3r_Exception_h_
 #define _libslic3r_Exception_h_
 
 #include <stdexcept>
+#include <vector>
 
 namespace Slic3r {
 
@@ -28,7 +25,27 @@ SLIC3R_DERIVE_EXCEPTION(HostNetworkError,   IOError);
 SLIC3R_DERIVE_EXCEPTION(ExportError,        CriticalException);
 SLIC3R_DERIVE_EXCEPTION(PlaceholderParserError, RuntimeError);
 // Runtime exception produced by Slicer. Such exception cancels the slicing process and it shall be shown in notifications.
-SLIC3R_DERIVE_EXCEPTION(SlicingError,       Exception);
+//SLIC3R_DERIVE_EXCEPTION(SlicingError,       Exception);
+class SlicingError : public Exception 
+{
+public:
+    using Exception::Exception;
+    SlicingError(std::string const &msg, size_t objectId) : Exception(msg), objectId_(objectId) {}
+    size_t objectId() const { return objectId_; }
+
+private:
+    size_t objectId_ = 0;
+};
+
+class SlicingErrors : public Exception
+{
+public:
+    using Exception::Exception;
+    SlicingErrors(const std::vector<SlicingError> &errors) : Exception("Errors"), errors_(errors) {}
+
+    std::vector<SlicingError> errors_;
+};
+
 #undef SLIC3R_DERIVE_EXCEPTION
 
 } // namespace Slic3r

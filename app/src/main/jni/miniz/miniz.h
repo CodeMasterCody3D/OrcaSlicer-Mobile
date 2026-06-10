@@ -966,6 +966,9 @@ typedef struct
     /* MZ_TRUE if the file is not encrypted, a patch file, and if it uses a compression method we support. */
     mz_bool m_is_supported;
 
+    /* BBS: MZ_TRUE if the filename is UTF-8 encoded (general purpose bit flag 11). */
+    mz_bool m_is_utf8;
+
     /* Filename. If string ends in '/' it's a subdirectory entry. */
     /* Guaranteed to be zero terminated, may be truncated to fit. */
     char m_filename[MZ_ZIP_MAX_ARCHIVE_FILENAME_SIZE];
@@ -1168,6 +1171,10 @@ int mz_zip_reader_locate_file_v2(mz_zip_archive *pZip, const char *pName, const 
 
 /* Retrieves the filename of an archive file entry from EXTRA ID. */
 mz_uint mz_zip_reader_get_filename_from_extra(mz_zip_archive * pZip, mz_uint file_index, char* buffer, mz_uint extra_buf_size);
+
+/* BBS: Retrieves the raw EXTRA field bytes of an archive file entry from the central directory. */
+/* Returns the number of bytes written to pExtra (capped at extra_buf_size). */
+mz_uint mz_zip_reader_get_extra(mz_zip_archive *pZip, mz_uint file_index, char *pExtra, mz_uint extra_buf_size);
 
 /* Returns detailed information about an archive file entry. */
 mz_bool mz_zip_reader_file_stat(mz_zip_archive *pZip, mz_uint file_index, mz_zip_archive_file_stat *pStat);

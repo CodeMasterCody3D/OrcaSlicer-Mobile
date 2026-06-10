@@ -1,8 +1,3 @@
-///|/ Copyright (c) Prusa Research 2017 - 2023 Vojtěch Bubník @bubnikv
-///|/ Copyright (c) Slic3r 2014 - 2015 Alessandro Ranellucci @alranel
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_PlaceholderParser_hpp_
 #define slic3r_PlaceholderParser_hpp_
 
@@ -75,6 +70,9 @@ public:
     static void update_timestamp(DynamicConfig &config);
     // Update timestamp, year, month, day, hour, minute, second variables at m_config.
     void update_timestamp() { update_timestamp(m_config); }
+
+    static void update_user_name(DynamicConfig &config);
+    void update_user_name() { update_user_name(m_config); }
 
 private:
 	// config has a higher priority than external_config when looking up a symbol.

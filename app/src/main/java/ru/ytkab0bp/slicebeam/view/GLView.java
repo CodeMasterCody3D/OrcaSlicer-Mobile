@@ -57,6 +57,25 @@ public class GLView extends GLSurfaceView implements IThemeView {
     private OnModelLongPressListener onModelLongPressListener;
     private OnBedLongPressListener onBedLongPressListener;
 
+    // When true and the renderer is in paint mode, a single finger paints instead of orbiting.
+    private boolean paintBrushActive;
+
+    public void setPaintBrushActive(boolean active) {
+        this.paintBrushActive = active;
+    }
+
+    public boolean isPaintBrushActive() {
+        return paintBrushActive;
+    }
+
+    private void paintAtScreen(float x, float y) {
+        float renderScale = Prefs.getRenderScale();
+        queueEvent(() -> {
+            renderer.paintAt(x * renderScale, y * renderScale);
+            requestRender();
+        });
+    }
+
     public interface OnModelLongPressListener {
         void onModelLongPress(GLView view, int objectIndex, float x, float y);
     }
@@ -85,7 +104,7 @@ public class GLView extends GLSurfaceView implements IThemeView {
             longClickMoved = false;
             longClickTranslation.set(0, 0, 0);
 
-            if (getRenderer().setSelectedObject(longClickTargetObject)) {
+            if (getRenderer().focusForDrag(longClickTargetObject)) {
                 requestRender();
             }
 
@@ -152,23 +171,67 @@ public class GLView extends GLSurfaceView implements IThemeView {
         if (renderer.getModel() == null || fillBedInProgress) return;
 
         fillBedInProgress = true;
-        fillBedWithSelectedModelStep(callback, 0);
-    }
-
-    private void fillBedWithSelectedModelStep(FillBedCallback callback, int totalAddedCopies) {
         queueEvent(() -> {
-            int addedCopies = renderer.fillBedWithSelectedObjectStep();
+            int addedCopies = renderer.fillBedWithSelectedObject();
             requestRender();
             ViewUtils.postOnMainThread(() -> {
-                if (addedCopies > 0) {
-                    postDelayed(() -> fillBedWithSelectedModelStep(callback, totalAddedCopies + addedCopies), FILL_BED_STEP_DELAY_MS);
-                    return;
-                }
-
                 fillBedInProgress = false;
                 if (callback != null) {
-                    callback.onFillBedComplete(totalAddedCopies);
+                    callback.onFillBedComplete(addedCopies);
                 }
+            });
+        });
+    }
+
+    public void duplicateSelectedModel(Runnable onComplete) {
+        queueEvent(() -> {
+            renderer.duplicateSelectedObject();
+            requestRender();
+            ViewUtils.postOnMainThread(() -> {
+                if (onComplete != null) onComplete.run();
+            });
+        });
+    }
+
+    public void deleteSelectedModel(Runnable onComplete) {
+        queueEvent(() -> {
+            int sel = renderer.getSelectedObject();
+            if (sel != -1) {
+                renderer.deleteObject(sel);
+            }
+            requestRender();
+            ViewUtils.postOnMainThread(() -> {
+                if (onComplete != null) onComplete.run();
+            });
+        });
+    }
+
+    public void selectAllModels(Runnable onComplete) {
+        queueEvent(() -> {
+            renderer.selectAllObjects();
+            requestRender();
+            ViewUtils.postOnMainThread(() -> {
+                if (onComplete != null) onComplete.run();
+            });
+        });
+    }
+
+    public void centerSelectedOnBed(Runnable onComplete) {
+        queueEvent(() -> {
+            renderer.centerSelectionOnBed();
+            requestRender();
+            ViewUtils.postOnMainThread(() -> {
+                if (onComplete != null) onComplete.run();
+            });
+        });
+    }
+
+    public void deleteAllModels(Runnable onComplete) {
+        queueEvent(() -> {
+            renderer.deleteAllObjects();
+            requestRender();
+            ViewUtils.postOnMainThread(() -> {
+                if (onComplete != null) onComplete.run();
             });
         });
     }
@@ -348,6 +411,13 @@ public class GLView extends GLSurfaceView implements IThemeView {
             return true;
         }
 
+        // Paint mode: a single finger paints; two fingers still orbit/zoom via the normal path.
+        if (renderer.isPaintMode() && paintBrushActive && e.getPointerCount() == 1
+                && (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE)) {
+            paintAtScreen(e.getX(), e.getY());
+            return true;
+        }
+
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             if (e.getPointerCount() == 2) {
                 removeCallbacks(longClick);
@@ -379,11 +449,8 @@ public class GLView extends GLSurfaceView implements IThemeView {
             if (longClickGesture) {
                 if (longClickMoved) {
                     queueEvent(()->{
-                        int j = getRenderer().getSelectedObject();
-                        getRenderer().getModel().getTranslation(j, tempVec);
-                        getRenderer().setSelectionTranslation(0, 0, 0);
-                        getRenderer().getModel().translate(j, longClickTranslation.x, longClickTranslation.y, 0);
-                        getRenderer().invalidateGlModel(j);
+                        // Commit the drag to the whole selection (group move when multiple are selected).
+                        getRenderer().translateSelectedObjects(longClickTranslation.x, longClickTranslation.y, 0);
                         requestRender();
                         SliceBeam.EVENT_BUS.fireEvent(new LongClickTranslationEvent(longClickTranslation.x, longClickTranslation.y, false));
                     });

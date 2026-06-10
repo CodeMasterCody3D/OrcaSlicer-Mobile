@@ -5,7 +5,6 @@
 #define CURAENGINE_WALLTOOLPATHS_H
 
 #include <memory>
-
 #include <ankerl/unordered_dense.h>
 
 #include "BeadingStrategy/BeadingStrategyFactory.hpp"
@@ -16,10 +15,28 @@
 namespace Slic3r::Arachne
 {
 
-constexpr bool    fill_outline_gaps                        = true;
-constexpr coord_t meshfix_maximum_resolution               = scaled<coord_t>(0.5);
-constexpr coord_t meshfix_maximum_deviation                = scaled<coord_t>(0.025);
-constexpr coord_t meshfix_maximum_extrusion_area_deviation = scaled<coord_t>(2.);
+constexpr bool    fill_outline_gaps = true;
+inline coord_t    meshfix_maximum_resolution() { return scaled<coord_t>(0.5); }
+inline coord_t    meshfix_maximum_deviation() { return scaled<coord_t>(0.025); }
+inline coord_t    meshfix_maximum_extrusion_area_deviation() { return scaled<coord_t>(2.); }
+
+class WallToolPathsParams
+{
+public:
+    float   min_bead_width;
+    float   min_feature_size;
+    float   min_length_factor;
+    float   wall_transition_length;
+    float   wall_transition_angle;
+    float   wall_transition_filter_deviation;
+    int     wall_distribution_count;
+    bool    is_top_or_bottom_layer;
+
+    coord_t wall_maximum_resolution = meshfix_maximum_resolution();
+    coord_t wall_maximum_deviation  = meshfix_maximum_deviation();
+};
+
+WallToolPathsParams make_paths_params(const int layer_id, const PrintObjectConfig &print_object_config, const PrintConfig &print_config);
 
 class WallToolPaths
 {
@@ -32,7 +49,7 @@ public:
      * \param inset_count The maximum number of parallel extrusion lines that make up the wall
      * \param wall_0_inset How far to inset the outer wall, to make it adhere better to other walls.
      */
-    WallToolPaths(const Polygons& outline, coord_t bead_width_0, coord_t bead_width_x, size_t inset_count, coord_t wall_0_inset, coordf_t layer_height, const PrintObjectConfig &print_object_config, const PrintConfig &print_config);
+    WallToolPaths(const Polygons& outline, coord_t bead_width_0, coord_t bead_width_x, size_t inset_count, coord_t wall_0_inset, coordf_t layer_height, const WallToolPathsParams &params);
 
     /*!
      * Generates the Toolpaths
@@ -76,6 +93,16 @@ public:
 
     using ExtrusionLineSet = ankerl::unordered_dense::set<std::pair<const ExtrusionLine *, const ExtrusionLine *>, boost::hash<std::pair<const ExtrusionLine *, const ExtrusionLine *>>>;
 
+    /*!
+     * Get the order constraints of the insets when printing walls per region / hole.
+     * Each returned pair consists of adjacent wall lines where the left has an inset_idx one lower than the right.
+     *
+     * Odd walls should always go after their enclosing wall polygons.
+     *
+     * \param outer_to_inner Whether the wall polygons with a lower inset_idx should go before those with a higher one.
+     */
+    static ExtrusionLineSet getRegionOrder(const std::vector<ExtrusionLine *> &input, bool outer_to_inner);
+
 protected:
     /*!
      * Stitch the polylines together and form closed polygons.
@@ -87,15 +114,16 @@ protected:
     /*!
      * Remove polylines shorter than half the smallest line width along that polyline.
      */
-    static void removeSmallLines(std::vector<VariableWidthLines> &toolpaths);
+    void removeSmallLines(std::vector<VariableWidthLines> &toolpaths);
 
     /*!
      * Simplifies the variable-width toolpaths by calling the simplify on every line in the toolpath using the provided
      * settings.
-     * \param settings The settings as provided by the user
+     * \param toolpaths The toolpaths vector to simplify
+     * \param params The settings as provided by the user
      * \return
      */
-    static void simplifyToolPaths(std::vector<VariableWidthLines>  &toolpaths);
+    static void simplifyToolPaths(std::vector<VariableWidthLines>& toolpaths, const WallToolPathsParams& params);
 
 private:
     const Polygons& outline; //<! A reference to the outline polygon that is the designated area
@@ -109,12 +137,10 @@ private:
     coord_t min_bead_width;  //<! The minimum bead size to use when widening thin model features with the widening beading meta-strategy
     double small_area_length; //<! The length of the small features which are to be filtered out, this is squared into a surface
     coord_t wall_transition_filter_deviation; //!< The allowed line width deviation induced by filtering
-    coord_t wall_transition_length;
-    float min_nozzle_diameter;
     bool toolpaths_generated; //<! Are the toolpaths generated
     std::vector<VariableWidthLines> toolpaths; //<! The generated toolpaths
     Polygons inner_contour;  //<! The inner contour of the generated toolpaths
-    const PrintObjectConfig &print_object_config;
+    const WallToolPathsParams m_params;
 };
 
 } // namespace Slic3r::Arachne

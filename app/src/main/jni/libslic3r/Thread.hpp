@@ -1,18 +1,10 @@
-///|/ Copyright (c) Prusa Research 2020 - 2023 Vojtěch Bubník @bubnikv
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef GUI_THREAD_HPP
 #define GUI_THREAD_HPP
 
 #include <utility>
 #include <string>
 #include <thread>
-#include <random>
 #include <boost/thread.hpp>
-
-#include <tbb/task_scheduler_observer.h>
-#include <tbb/enumerable_thread_specific.h>
 
 namespace Slic3r {
 
@@ -41,10 +33,6 @@ boost::thread::id get_main_thread_id();
 // Checks whether the main (UI) thread is active.
 bool is_main_thread_active();
 
-// OSX specific: Set Quality of Service to "user initiated", so that the threads will be scheduled to high performance
-// cores if available.
-void set_current_thread_qos();
-
 // Returns nullopt if not supported.
 // Not supported by OSX.
 // Naming threads is only supported on newer Windows 10.
@@ -58,11 +46,23 @@ void name_tbb_thread_pool_threads_set_locale();
 template<class Fn>
 inline boost::thread create_thread(boost::thread::attributes &attrs, Fn &&fn)
 {
-    // Duplicating the stack allocation size of Thread Building Block worker
-    // threads of the thread pool: allocate 4MB on a 64bit system, allocate 2MB
-    // on a 32bit system by default.
-    
-    attrs.set_stack_size((sizeof(void*) == 4) ? (2048 * 1024) : (4096 * 1024));
+    // Stack size for our worker threads. Originally duplicated TBB's pool
+    // default (4 MB), but the Emboss text-cut path calls into CGAL's
+    // Polygon_mesh_processing::corefine, which falls back from filtered
+    // interval arithmetic to exact rational arithmetic (mpq_class) on
+    // near-degenerate input, and the constrained 2D triangulation walker
+    // (Triangulation_2::march_locate_2D) can recurse deeply enough to
+    // exceed 4 MB on real models -- producing a SIGBUS at the next thread's
+    // stack guard page on macOS / Linux.
+    //
+    // 16 MB chosen as 4x defensive headroom over the observed crash
+    // threshold (n=1 reproducer at exactly 4 MB on macOS arm64). All three
+    // platforms defer-commit reserved stack pages: macOS / Linux mmap the
+    // stack and only fault in pages on touch; Boost.Thread on Win32 passes
+    // STACK_SIZE_PARAM_IS_A_RESERVATION to _beginthreadex, so the value is
+    // a reserve, not the initial commit. Resident memory therefore stays
+    // proportional to actual stack depth on every target.
+    attrs.set_stack_size(16 * 1024 * 1024);
     return boost::thread{attrs, std::forward<Fn>(fn)};
 }
 
@@ -71,42 +71,6 @@ template<class Fn> inline boost::thread create_thread(Fn &&fn)
     boost::thread::attributes attrs;
     return create_thread(attrs, std::forward<Fn>(fn));    
 }
-
-class ThreadData {
-public:
-    std::mt19937&   random_generator() {
-        if (! m_random_generator_initialized) {
-            std::random_device rd;
-            m_random_generator.seed(rd());
-            m_random_generator_initialized = true;
-        }
-        return m_random_generator;
-    }
-
-    void            tbb_worker_thread_set_c_locales();
-
-private:
-    std::mt19937    m_random_generator;
-    bool            m_random_generator_initialized { false };
-    bool            m_tbb_worker_thread_c_locales_set { false };
-};
-
-ThreadData& thread_data();
-
-// For unknown reasons and in sporadic cases when GCode export is processing, some participating thread
-// in tbb::parallel_pipeline has not set locales to "C", probably because this thread is newly spawned.
-// So in this class method on_scheduler_entry is called for every thread before it starts participating
-// in tbb::parallel_pipeline to ensure that locales are set correctly
-//
-// For tbb::parallel_pipeline, it seems that on_scheduler_entry is called for every layer and every filter.
-// We ensure using thread-local storage that locales will be set to "C" just once for any participating thread.
-class TBBLocalesSetter : public tbb::task_scheduler_observer
-{
-public:
-    TBBLocalesSetter() { this->observe(true); }
-    ~TBBLocalesSetter() override { this->observe(false); };
-    void on_scheduler_entry(bool /* is_worker */) override { thread_data().tbb_worker_thread_set_c_locales(); }
-};
 
 }
 

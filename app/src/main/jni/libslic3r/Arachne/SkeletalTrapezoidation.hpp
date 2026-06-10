@@ -5,11 +5,11 @@
 #define SKELETAL_TRAPEZOIDATION_H
 
 #include <boost/polygon/voronoi.hpp>
-
+#include <ankerl/unordered_dense.h>
 #include <memory> // smart pointers
 #include <utility> // pair
-
-#include <ankerl/unordered_dense.h>
+#include <list>
+#include <vector>
 
 #include "utils/HalfEdgeGraph.hpp"
 #include "utils/PolygonsSegmentIndex.hpp"
@@ -20,6 +20,10 @@
 #include "libslic3r/Arachne/BeadingStrategy/BeadingStrategy.hpp"
 #include "SkeletalTrapezoidationGraph.hpp"
 #include "../Geometry/Voronoi.hpp"
+#include "libslic3r/Line.hpp"
+#include "libslic3r/Point.hpp"
+#include "libslic3r/Polygon.hpp"
+#include "libslic3r/libslic3r.h"
 
 //#define ARACHNE_DEBUG
 //#define ARACHNE_DEBUG_VORONOI
@@ -65,8 +69,10 @@ class SkeletalTrapezoidation
     coord_t transition_filter_dist; //!< Filter transition mids (i.e. anchors) closer together than this
     coord_t allowed_filter_deviation; //!< The allowed line width deviation induced by filtering
     coord_t beading_propagation_transition_dist; //!< When there are different beadings propagated from below and from above, use this transitioning distance
-    static constexpr coord_t central_filter_dist = scaled<coord_t>(0.02); //!< Filter areas marked as 'central' smaller than this
-    static constexpr coord_t snap_dist = scaled<coord_t>(0.02); //!< Generic arithmatic inaccuracy. Only used to determine whether a transition really needs to insert an extra edge.
+    //!< Filter areas marked as 'central' smaller than this
+    inline coord_t central_filter_dist() { return scaled<coord_t>(0.02); }
+    //!< Generic arithmatic inaccuracy. Only used to determine whether a transition really needs to insert an extra edge.
+    inline coord_t snap_dist() { return scaled<coord_t>(0.02); }
 
     /*!
      * The strategy to use to fill a certain shape with lines.

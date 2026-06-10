@@ -61,9 +61,6 @@ import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 import com.loopj.android.http.AsyncHttpClient;
 import com.loopj.android.http.AsyncHttpResponseHandler;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -111,6 +108,7 @@ import ru.ytkab0bp.slicebeam.slic3r.Slic3rUtils;
 import ru.ytkab0bp.slicebeam.theme.BeamTheme;
 import ru.ytkab0bp.slicebeam.theme.IThemeView;
 import ru.ytkab0bp.slicebeam.theme.ThemesRepo;
+import ru.ytkab0bp.slicebeam.utils.IOUtils;
 import ru.ytkab0bp.slicebeam.utils.Prefs;
 import ru.ytkab0bp.slicebeam.utils.ViewUtils;
 import ru.ytkab0bp.slicebeam.view.BeamSwitch;
@@ -124,15 +122,12 @@ public class SetupActivity extends AppCompatActivity {
     public final static String EXTRA_BOOSTY_ONLY = "boosty_only";
     public final static String EXTRA_CLOUD_PROFILE = "cloud_profile";
     public final static String EXTRA_CLOUD_IMPORT_FROM_SETUP = "cloud_import_from_setup";
+    public final static String EXTRA_ADD_PRINTER = "add_printer";
 
     private final static String TAG = "SetupActivity";
 
-    private final static List<String> REPOS_URLS = Arrays.asList(
-            "https://preset-repo-api.prusa3d.com/v1/repos",
-            "https://raw.githubusercontent.com/utkabobr/SliceBeam/refs/heads/master/.profiledumpsrepo/manifest.json"
-    );
+    private static final String ORCA_ASSET_DIR = "orca_profiles";
 
-    private final static int REPOS_INDEX = 1;
     private final static int PROFILES_INDEX = 2;
     private static int BOOSTY_INDEX = 3;
 
@@ -155,11 +150,8 @@ public class SetupActivity extends AppCompatActivity {
     private AsyncHttpClient client = new AsyncHttpClient();
 
     private List<ProfilesRepo> repos = new ArrayList<>();
-    private ReposItem reposItem;
     private ProfilesItem profilesItem;
     private CloudProfileItem cloudItem;
-    private boolean isReposLoaded;
-    private boolean limitRepoFragmentCount = true;
     private boolean limitProfileFragmentCount = true;
     private boolean isLoading;
 
@@ -169,6 +161,7 @@ public class SetupActivity extends AppCompatActivity {
     private boolean boostyOnly;
     private boolean cloudProfile;
     private boolean cloudImport;
+    private boolean addPrinter;
 
     private List<ConfigObject> enabledPrinters = new ArrayList<>();
 
@@ -188,8 +181,15 @@ public class SetupActivity extends AppCompatActivity {
         boostyOnly = getIntent().getBooleanExtra(EXTRA_BOOSTY_ONLY, false);
         cloudProfile = getIntent().getBooleanExtra(EXTRA_CLOUD_PROFILE, false);
         cloudImport = getIntent().getBooleanExtra(EXTRA_CLOUD_IMPORT_FROM_SETUP, false);
+        addPrinter = getIntent().getBooleanExtra(EXTRA_ADD_PRINTER, false);
 
-        if (!about && !boostyOnly && !cloudProfile) {
+        if (SliceBeam.CONFIG != null && !about && !boostyOnly && !cloudProfile && !addPrinter) {
+            startActivity(new Intent(this, MainActivity.class));
+            finish();
+            return;
+        }
+
+        if (!about && !boostyOnly && !cloudProfile && !addPrinter) {
             new BeamAlertDialogBuilder(this)
                     .setTitle(R.string.IntroEarlyAccess)
                     .setMessage(R.string.IntroEarlyAccessMessage)
@@ -205,7 +205,7 @@ public class SetupActivity extends AppCompatActivity {
         adapter = new SimpleRecyclerAdapter() {
             @Override
             public int getItemCount() {
-                return about || boostyOnly || cloudProfile ? 1 : limitRepoFragmentCount ? REPOS_INDEX + 1 : limitProfileFragmentCount ? PROFILES_INDEX + 1 : super.getItemCount();
+                return about || boostyOnly || cloudProfile ? 1 : limitProfileFragmentCount ? PROFILES_INDEX + 1 : super.getItemCount();
             }
         };
         setItems();
@@ -213,17 +213,6 @@ public class SetupActivity extends AppCompatActivity {
             @Override
             public void onPageScrollStateChanged(int state) {
                 if (state == ViewPager2.SCROLL_STATE_IDLE) {
-                    if (pager.getCurrentItem() <= REPOS_INDEX && !limitRepoFragmentCount) {
-                        ViewUtils.postOnMainThread(() -> {
-                            isProfilesLoaded = false;
-                            profilesMap.clear();
-                            adapter.notifyItemChanged(PROFILES_INDEX);
-
-                            int realCount = adapter.getItemCount();
-                            limitRepoFragmentCount = true;
-                            adapter.notifyItemRangeRemoved(REPOS_INDEX + 1, realCount - REPOS_INDEX - 1);
-                        });
-                    }
                     if (pager.getCurrentItem() <= PROFILES_INDEX && !limitProfileFragmentCount) {
                         ViewUtils.postOnMainThread(() -> {
                             int realCount = adapter.getItemCount();
@@ -255,15 +244,7 @@ public class SetupActivity extends AppCompatActivity {
                     profilesItem.recyclerView.setOverlayAlpha(1f - boostyProgress);
                 }
 
-                if (position == REPOS_INDEX) {
-                    if (!isReposLoaded && !isLoading) {
-                        loadRepos(true);
-                        pager.setUserInputEnabled(false);
-                    }
-                    if (isLoading) {
-                        pager.setUserInputEnabled(false);
-                    }
-                } else if (position == PROFILES_INDEX) {
+                if (position == PROFILES_INDEX) {
                     if (!isProfilesLoaded && !isLoading && !profilesItem.useCustomProfile) {
                         AtomicInteger loadedCount = new AtomicInteger();
                         AtomicInteger totalNeeded = new AtomicInteger();
@@ -277,6 +258,11 @@ public class SetupActivity extends AppCompatActivity {
                         for (ProfilesRepo repo : repos) {
                             if (repo.checked) {
                                 totalNeeded.incrementAndGet();
+
+                                if (repo.localAssets) {
+                                    loadLocalProfiles(repo, loadedCount, totalNeeded, onLoadedAll);
+                                    continue;
+                                }
 
                                 client.get(repo.indexUrl, new AsyncHttpResponseHandler() {
                                     @Override
@@ -477,10 +463,52 @@ public class SetupActivity extends AppCompatActivity {
         });
         setContentView(fl);
 
-        if (!isLoading && !isReposLoaded) {
-            // Pre-load repos silently
-            loadRepos(false);
-        }
+        // Pre-populate OrcaSlicer as the only profile source
+        ProfilesRepo orcaRepo = new ProfilesRepo();
+        orcaRepo.name = "OrcaSlicer";
+        orcaRepo.description = "Bundled OrcaSlicer printer profiles";
+        orcaRepo.localAssets = true;
+        orcaRepo.checked = true;
+        repos.add(orcaRepo);
+    }
+
+    private void loadLocalProfiles(ProfilesRepo repo, AtomicInteger loadedCount, AtomicInteger totalNeeded, Runnable onLoadedAll) {
+        IOUtils.IO_POOL.execute(() -> {
+            List<Slic3rConfigWrapper> vendorProfiles = new ArrayList<>();
+            try {
+                String[] files = getAssets().list(ORCA_ASSET_DIR);
+                if (files != null) {
+                    Arrays.sort(files);
+                    for (String file : files) {
+                        if (!file.endsWith(".ini")) {
+                            continue;
+                        }
+                        try (InputStream in = getAssets().open(ORCA_ASSET_DIR + "/" + file)) {
+                            Slic3rConfigWrapper cfg = new Slic3rConfigWrapper(in);
+                            vendorProfiles.add(cfg);
+                        } catch (IOException e) {
+                            Log.w(TAG, "Failed to load local Orca profile asset " + file, e);
+                        }
+                    }
+                }
+
+                ViewUtils.postOnMainThread(() -> {
+                    profilesMap.put(repo, vendorProfiles);
+                    loadedCount.incrementAndGet();
+                    if (loadedCount.get() == totalNeeded.get()) {
+                        ViewUtils.postOnMainThread(onLoadedAll);
+                    }
+                });
+            } catch (IOException e) {
+                Log.e(TAG, "Failed to load local OrcaSlicer profile assets", e);
+                isLoading = false;
+                ViewUtils.postOnMainThread(() -> {
+                    Toast.makeText(SliceBeam.INSTANCE, R.string.IntroFailedToLoadRepos, Toast.LENGTH_SHORT).show();
+                    fakeScroll(-1);
+                    pager.setUserInputEnabled(true);
+                });
+            }
+        });
     }
 
     private void invalidateTitleY() {
@@ -519,7 +547,6 @@ public class SetupActivity extends AppCompatActivity {
         }
         if (!about && !boostyOnly && !cloudProfile) {
             if (Prefs.getCloudAPIToken() != null) {
-                limitRepoFragmentCount = false;
                 limitProfileFragmentCount = false;
                 pager.getAdapter().notifyDataSetChanged();
                 pager.setCurrentItem(pager.getAdapter().getItemCount() - 1);
@@ -537,9 +564,7 @@ public class SetupActivity extends AppCompatActivity {
 
     @EventHandler(runOnMainThread = true)
     public void onCloudFeaturesUpdated(CloudFeaturesUpdatedEvent e) {
-        if (!about && !boostyOnly && !cloudProfile) {
-            reposItem.onCloudInfoUpdated();
-        }
+        // cloud features update handled elsewhere
     }
 
     private void setItems() {
@@ -552,7 +577,7 @@ public class SetupActivity extends AppCompatActivity {
         } else {
             List<SimpleRecyclerItem> items = new ArrayList<>(Arrays.asList(
                     new IntroItem(),
-                    reposItem = new ReposItem(),
+                    new PresetChoiceItem(),
                     profilesItem = new ProfilesItem()));
 
             if (BeamServerData.isBoostyAvailable()) {
@@ -569,78 +594,12 @@ public class SetupActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
-        if (pager.getCurrentItem() > 0) {
+        if (pager.getCurrentItem() == PROFILES_INDEX + 1 && profilesItem != null && profilesItem.useCustomProfile) {
+            pager.setCurrentItem(1, true);
+        } else if (pager.getCurrentItem() > 0) {
             pager.setCurrentItem(pager.getCurrentItem() - 1, true);
         } else {
             super.onBackPressed();
-        }
-    }
-
-    private void loadRepos(boolean fromPage) {
-        isLoading = true;
-        repos.clear();
-        List<String> finishedIndexes = new ArrayList<>();
-        Map<String, List<ProfilesRepo>> reposMap = new HashMap<String, List<ProfilesRepo>>() {
-            @Nullable
-            @Override
-            public List<ProfilesRepo> get(@Nullable Object key) {
-                List<ProfilesRepo> list = super.get(key);
-                if (list == null) put((String) key, list = new ArrayList<>());
-                return list;
-            }
-        };
-        for (String repo : REPOS_URLS) {
-            client.get(repo, new AsyncHttpResponseHandler() {
-                @Override
-                public void onSuccess(int statusCode, Header[] headers, byte[] responseBody) {
-                    finishedIndexes.add(repo);
-                    try {
-                        JSONArray arr = new JSONArray(new String(responseBody));
-                        for (int i = 0; i < arr.length(); i++) {
-                            JSONObject obj = arr.getJSONObject(i);
-                            if (obj.getString("id").endsWith("-fff")) {
-                                ProfilesRepo r = new ProfilesRepo();
-                                r.url = obj.getString("url");
-                                r.name = obj.getString("name");
-                                r.description = obj.getString("description");
-                                r.indexUrl = obj.getString("index_url");
-                                reposMap.get(repo).add(r);
-                            }
-                        }
-
-                        if (finishedIndexes.size() == REPOS_URLS.size()) {
-                            // Filter in the right way
-                            for (String repo : REPOS_URLS) {
-                                repos.addAll(reposMap.get(repo));
-                            }
-
-                            ViewUtils.postOnMainThread(() -> {
-                                isLoading = false;
-                                if (fromPage) {
-                                    reposItem.onReposLoaded();
-                                }
-                                pager.setUserInputEnabled(true);
-                                isReposLoaded = true;
-                            });
-                        }
-                    } catch (JSONException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-
-                @Override
-                public void onFailure(int statusCode, Header[] headers, byte[] responseBody, Throwable error) {
-                    isLoading = false;
-                    Log.e(TAG, "Failed to load repos", error);
-                    if (fromPage) {
-                        ViewUtils.postOnMainThread(() -> {
-                            Toast.makeText(SliceBeam.INSTANCE, R.string.IntroFailedToLoadRepos, Toast.LENGTH_SHORT).show();
-                            fakeScroll(-1);
-                            pager.setUserInputEnabled(true);
-                        });
-                    }
-                }
-            });
         }
     }
 
@@ -1056,61 +1015,13 @@ public class SetupActivity extends AppCompatActivity {
             ll.setOrientation(LinearLayout.VERTICAL);
             ll.setGravity(Gravity.BOTTOM);
 
-            TextView favoriteHint = new TextView(ctx);
-            favoriteHint.setText(R.string.IntroLetStartWithColor);
-            favoriteHint.setGravity(Gravity.CENTER);
-            favoriteHint.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
-            favoriteHint.setTextColor(ThemesRepo.getColor(android.R.attr.textColorSecondary));
-            ll.addView(favoriteHint, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
-                bottomMargin = ViewUtils.dp(12);
-            }});
-
-            LinearLayout colors = new LinearLayout(ctx);
-            colors.setOrientation(LinearLayout.HORIZONTAL);
-            colors.setGravity(Gravity.CENTER);
-            for (AccentColors color : AccentColors.values()) {
-                MiniColorView view = new MiniColorView(ctx);
-                view.setColor(color.color);
-                int margin = colors.getChildCount() > 0 ? 10 : 0;
-                view.setOnClickListener(v -> {
-                    int from = ThemesRepo.getColor(android.R.attr.colorAccent);
-                    if (from == color.color) return;
-                    Prefs.setAccentColor(color.color);
-
-                    int wasIndex = -1;
-                    for (int i = 0; i < colors.getChildCount(); i++) {
-                        AccentColors _c = AccentColors.values()[i];
-                        if (_c.color == from) {
-                            wasIndex = i;
-                            break;
-                        }
-                    }
-
-                    int finalWasIndex = wasIndex;
-                    new SpringAnimation(new FloatValueHolder(0))
-                            .setMinimumVisibleChange(1 / 256f)
-                            .setSpring(new SpringForce(1f)
-                                    .setStiffness(1000f)
-                                    .setDampingRatio(1f))
-                            .addUpdateListener((animation, value, velocity) -> {
-                                BeamTheme.LIGHT.colors.put(android.R.attr.colorAccent, ColorUtils.blendARGB(from, color.color, value));
-                                BeamTheme.DARK.colors.put(android.R.attr.colorAccent, ColorUtils.blendARGB(from, color.color, value));
-                                buttonView.setBackground(ViewUtils.createRipple(ThemesRepo.getColor(android.R.attr.colorControlHighlight), ThemesRepo.getColor(android.R.attr.colorAccent), 16));
-                                backgroundView.requestRender();
-                                if (finalWasIndex != -1) {
-                                    ((MiniColorView) colors.getChildAt(finalWasIndex)).setSelectionProgress(1f - value);
-                                }
-                                ((MiniColorView) v).setSelectionProgress(value);
-                            })
-                            .addEndListener((animation, canceled, value, velocity) -> adapter.notifyItemChanged(1))
-                            .start();
-                });
-
-                colors.addView(view, new LinearLayout.LayoutParams(ViewUtils.dp(28), ViewUtils.dp(28)) {{
-                    leftMargin = ViewUtils.dp(margin);
-                }});
-            }
-            ll.addView(colors, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+            TextView versionLabel = new TextView(ctx);
+            versionLabel.setText("OrcaSlicer v2.4 Beta");
+            versionLabel.setGravity(Gravity.CENTER);
+            versionLabel.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            versionLabel.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            versionLabel.setTextColor(ThemesRepo.getColor(android.R.attr.textColorSecondary));
+            ll.addView(versionLabel, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
                 bottomMargin = ViewUtils.dp(16);
             }});
 
@@ -1131,63 +1042,73 @@ public class SetupActivity extends AppCompatActivity {
         }
     }
 
-    private final class ReposItem extends SimpleRecyclerItem<View> {
-        private ProgressBar progressBar;
-        private FrameLayout loadedLayout;
-        private SimpleRecyclerAdapter adapter;
-        private TextView cloudImportView;
-        private TextView cloudOrView;
-        private TextView customProfileView;
+    private final class PresetChoiceItem extends SimpleRecyclerItem<View> {
         private TextView buttonView;
+        private LinearLayout builtInButton;
+        private LinearLayout customButton;
+        private BeamSwitch builtInSwitch;
+        private BeamSwitch customSwitch;
 
         @Override
         public View onCreateView(Context ctx) {
-            FrameLayout fl = new FrameLayout(ctx);
-            progressBar = new ProgressBar(ctx);
-            fl.addView(progressBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
-
-            loadedLayout = new FrameLayout(ctx);
-            RecyclerView recyclerView = new FadeRecyclerView(ctx);
-            recyclerView.setAdapter(adapter = new SimpleRecyclerAdapter());
-            loadedLayout.addView(recyclerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
-
             LinearLayout ll = new LinearLayout(ctx);
             ll.setOrientation(LinearLayout.VERTICAL);
-            cloudImportView = new TextView(ctx);
-            cloudImportView.setVisibility(View.GONE);
-            cloudImportView.setText(R.string.IntroImportFromCloud);
-            cloudImportView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
-            cloudImportView.setGravity(Gravity.CENTER);
-            cloudImportView.setPadding(ViewUtils.dp(12), ViewUtils.dp(8), ViewUtils.dp(12), ViewUtils.dp(8));
-            cloudImportView.setOnClickListener(v -> startActivity(new Intent(v.getContext(), SetupActivity.class).putExtra(SetupActivity.EXTRA_CLOUD_PROFILE, true).putExtra(SetupActivity.EXTRA_CLOUD_IMPORT_FROM_SETUP, true)));
-            ll.addView(cloudImportView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(48)) {{
-                leftMargin = rightMargin = ViewUtils.dp(16);
+            ll.setGravity(Gravity.BOTTOM);
+
+            TextView hint = new TextView(ctx);
+            hint.setText("Select preset source:");
+            hint.setGravity(Gravity.CENTER);
+            hint.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            hint.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+            hint.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            ll.addView(hint, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+                bottomMargin = ViewUtils.dp(24);
             }});
 
-            cloudOrView = new TextView(ctx);
-            cloudOrView.setVisibility(View.GONE);
-            cloudOrView.setText(R.string.IntroImportOr);
-            cloudOrView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
-            cloudOrView.setGravity(Gravity.CENTER);
-            ll.addView(cloudOrView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+            builtInButton = new LinearLayout(ctx);
+            builtInButton.setOrientation(LinearLayout.HORIZONTAL);
+            builtInButton.setGravity(Gravity.CENTER_VERTICAL);
+            builtInButton.setPadding(ViewUtils.dp(16), ViewUtils.dp(16), ViewUtils.dp(16), ViewUtils.dp(16));
+            
+            TextView builtInText = new TextView(ctx);
+            builtInText.setText("Built-in Presets");
+            builtInText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            builtInText.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+            builtInText.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            builtInButton.addView(builtInText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            builtInSwitch = new BeamSwitch(ctx);
+            builtInSwitch.setClickable(false);
+            builtInButton.addView(builtInSwitch);
+
+            ll.addView(builtInButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
                 leftMargin = rightMargin = ViewUtils.dp(16);
+                bottomMargin = ViewUtils.dp(12);
             }});
 
-            customProfileView = new TextView(ctx);
-            customProfileView.setText(R.string.IntroCustomProfile);
-            customProfileView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
-            customProfileView.setGravity(Gravity.CENTER);
-            customProfileView.setPadding(ViewUtils.dp(12), ViewUtils.dp(8), ViewUtils.dp(12), ViewUtils.dp(8));
-            customProfileView.setOnClickListener(v -> {
-                profilesItem.useCustomProfile = true;
-                limitRepoFragmentCount = false;
-                SetupActivity.this.adapter.notifyItemRangeInserted(REPOS_INDEX + 1, SetupActivity.this.adapter.getItemCount() - REPOS_INDEX - 1);
-                scrollToNext();
-            });
-            ll.addView(customProfileView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(48)) {{
+            customButton = new LinearLayout(ctx);
+            customButton.setOrientation(LinearLayout.HORIZONTAL);
+            customButton.setGravity(Gravity.CENTER_VERTICAL);
+            customButton.setPadding(ViewUtils.dp(16), ViewUtils.dp(16), ViewUtils.dp(16), ViewUtils.dp(16));
+
+            TextView customText = new TextView(ctx);
+            customText.setText("Custom Presets");
+            customText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            customText.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+            customText.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            customButton.addView(customText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            customSwitch = new BeamSwitch(ctx);
+            customSwitch.setClickable(false);
+            customButton.addView(customSwitch);
+
+            ll.addView(customButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
                 leftMargin = rightMargin = ViewUtils.dp(16);
-                bottomMargin = ViewUtils.dp(6);
+                bottomMargin = ViewUtils.dp(24);
             }});
+
+            builtInButton.setOnClickListener(v -> selectOption(false));
+            customButton.setOnClickListener(v -> selectOption(true));
 
             buttonView = new TextView(ctx);
             buttonView.setText(R.string.IntroNext);
@@ -1195,100 +1116,41 @@ public class SetupActivity extends AppCompatActivity {
             buttonView.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
             buttonView.setGravity(Gravity.CENTER);
             buttonView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
-            buttonView.setOnClickListener(v-> {
-                boolean noChecked = true;
-                for (ProfilesRepo repo : repos) {
-                    if (repo.checked) {
-                        noChecked = false;
-                        break;
-                    }
-                }
-                if (noChecked) {
-                    new BeamAlertDialogBuilder(SetupActivity.this)
-                            .setTitle(R.string.IntroNoRepos)
-                            .setMessage(R.string.IntroNoReposDescription)
-                            .setPositiveButton(android.R.string.ok, null)
-                            .show();
-                } else {
-                    profilesItem.useCustomProfile = false;
-                    limitRepoFragmentCount = false;
-                    SetupActivity.this.adapter.notifyItemRangeInserted(REPOS_INDEX + 1, SetupActivity.this.adapter.getItemCount() - REPOS_INDEX - 1);
-                    scrollToNext();
-                }
-            });
+            buttonView.setOnClickListener(v -> scrollToNext());
             ll.addView(buttonView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(52)) {{
                 leftMargin = rightMargin = ViewUtils.dp(16);
                 bottomMargin = ViewUtils.dp(16);
             }});
-            loadedLayout.addView(ll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
 
-            loadedLayout.setAlpha(0f);
-            fl.addView(loadedLayout, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-            fl.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            return fl;
+            ll.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            return ll;
         }
 
-        @SuppressLint("NotifyDataSetChanged")
+        private void selectOption(boolean custom) {
+            profilesItem.useCustomProfile = custom;
+            builtInSwitch.setChecked(!custom);
+            customSwitch.setChecked(custom);
+            if (profilesItem.adapter != null) {
+                profilesItem.adapter.setItems(profilesItem.getItems());
+            }
+        }
+
         @Override
         public void onBindView(View view) {
-            progressBar.setIndeterminateTintList(ColorStateList.valueOf(ThemesRepo.getColor(android.R.attr.colorAccent)));
-            cloudImportView.setTextColor(ThemesRepo.getColor(android.R.attr.colorAccent));
-            cloudImportView.setBackground(ViewUtils.createRipple(ThemesRepo.getColor(android.R.attr.colorControlHighlight), 16));
-            cloudImportView.setVisibility(BeamServerData.isCloudAvailable() ? View.VISIBLE : View.GONE);
-            cloudOrView.setTextColor(ThemesRepo.getColor(android.R.attr.textColorSecondary));
-            cloudOrView.setVisibility(BeamServerData.isCloudAvailable() ? View.VISIBLE : View.GONE);
-            customProfileView.setTextColor(ThemesRepo.getColor(android.R.attr.colorAccent));
-            customProfileView.setBackground(ViewUtils.createRipple(ThemesRepo.getColor(android.R.attr.colorControlHighlight), 16));
-            buttonView.setBackground(ViewUtils.createRipple(ThemesRepo.getColor(android.R.attr.colorControlHighlight), ThemesRepo.getColor(android.R.attr.colorAccent), 16));
+            int accent = ThemesRepo.getColor(android.R.attr.colorAccent);
+            int controlHighlight = ThemesRepo.getColor(android.R.attr.colorControlHighlight);
+            
+            builtInButton.setBackground(ViewUtils.createRipple(controlHighlight, 16));
+            customButton.setBackground(ViewUtils.createRipple(controlHighlight, 16));
+            
+            buttonView.setBackground(ViewUtils.createRipple(controlHighlight, accent, 16));
+            
+            builtInSwitch.onApplyTheme();
+            customSwitch.onApplyTheme();
 
-            if (adapter.getItemCount() == 0 && isReposLoaded) {
-                List<SimpleRecyclerItem> items = new ArrayList<>(repos);
-                items.add(new TextHintRecyclerItem(SliceBeam.INSTANCE.getString(R.string.IntroSelectRepos)));
-                adapter.setItems(items);
-            } else {
-                adapter.notifyDataSetChanged();
-            }
-
-            if (isReposLoaded) {
-                progressBar.setVisibility(View.GONE);
-                loadedLayout.setAlpha(1f);
-            } else {
-                progressBar.setVisibility(View.VISIBLE);
-                progressBar.setAlpha(1f);
-                progressBar.setScaleX(1f);
-                progressBar.setScaleY(1f);
-                loadedLayout.setAlpha(0f);
-            }
-        }
-
-        public void onCloudInfoUpdated() {
-            if (cloudImportView != null) {
-                cloudImportView.setVisibility(BeamServerData.isCloudAvailable() ? View.VISIBLE : View.GONE);
-                cloudOrView.setVisibility(BeamServerData.isCloudAvailable() ? View.VISIBLE : View.GONE);
-            }
-        }
-
-        public void onReposLoaded() {
-            List<SimpleRecyclerItem> items = new ArrayList<>(repos);
-            items.add(new TextHintRecyclerItem(SliceBeam.INSTANCE.getString(R.string.IntroSelectRepos)));
-            adapter.setItems(items);
-            new SpringAnimation(new FloatValueHolder(0))
-                    .setMinimumVisibleChange(1 / 256f)
-                    .setSpring(new SpringForce(1f)
-                            .setStiffness(1000f)
-                            .setDampingRatio(1f))
-                    .addUpdateListener((animation, value, velocity) -> {
-                        progressBar.setAlpha(1f - value);
-                        progressBar.setScaleX(1f - value * 0.5f);
-                        progressBar.setScaleY(1f - value * 0.5f);
-
-                        loadedLayout.setAlpha(value);
-                        loadedLayout.setScaleX(0.5f + value * 0.5f);
-                        loadedLayout.setScaleY(0.5f + value * 0.5f);
-                    })
-                    .addEndListener((animation, canceled, value, velocity) -> progressBar.setVisibility(View.GONE))
-                    .start();
+            boolean custom = profilesItem.useCustomProfile;
+            builtInSwitch.setChecked(!custom);
+            customSwitch.setChecked(custom);
         }
     }
 
@@ -1296,7 +1158,7 @@ public class SetupActivity extends AppCompatActivity {
         private ProgressBar progressBar;
         private FrameLayout loadedLayout;
         private FadeRecyclerView recyclerView;
-        private SimpleRecyclerAdapter adapter;
+        private final SimpleRecyclerAdapter adapter = new SimpleRecyclerAdapter();
         private TextView buttonView;
 
         private boolean useCustomProfile;
@@ -1309,7 +1171,7 @@ public class SetupActivity extends AppCompatActivity {
 
             loadedLayout = new FrameLayout(ctx);
             recyclerView = new FadeRecyclerView(ctx);
-            recyclerView.setAdapter(adapter = new SimpleRecyclerAdapter());
+            recyclerView.setAdapter(adapter);
             loadedLayout.addView(recyclerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
                 topMargin = ViewUtils.dp(52);
                 bottomMargin = ViewUtils.dp(72);
@@ -1352,7 +1214,7 @@ public class SetupActivity extends AppCompatActivity {
         public void onBindView(View view) {
             progressBar.setIndeterminateTintList(ColorStateList.valueOf(ThemesRepo.getColor(android.R.attr.colorAccent)));
             buttonView.setBackground(ViewUtils.createRipple(ThemesRepo.getColor(android.R.attr.colorControlHighlight), ThemesRepo.getColor(android.R.attr.colorAccent), 16));
-            if (adapter.getItemCount() == 0 && isReposLoaded) {
+            if (adapter.getItemCount() == 0 && !repos.isEmpty()) {
                 adapter.setItems(getItems());
             } else if (useCustomProfile) {
                 adapter.setItems(getItems());
@@ -1551,10 +1413,22 @@ public class SetupActivity extends AppCompatActivity {
                                         cfg.printerConfigs.add(obj);
 
                                         Slic3rUtils.ConfigChecker checker = new Slic3rUtils.ConfigChecker(obj.serialize());
+                                        String printerName = obj.getTitle();
+                                        String nozzle = obj.get("printer_variant");
+                                        if (nozzle == null) nozzle = Slic3rUtils.firstNozzleDiameter(obj.get("nozzle_diameter"));
                                         for (ConfigObject printConfig : w.printConfigs) {
-                                            if (!(printConfig.getTitle().startsWith("*") && printConfig.getTitle().endsWith("*")) && checker.checkCompatibility(printConfig.get("compatible_printers_condition"))) {
-                                                cfg.printConfigs.add(printConfig);
+                                            if (printConfig.getTitle().startsWith("*") && printConfig.getTitle().endsWith("*")) continue;
+                                            if (!checker.checkCompatibility(printConfig.get("compatible_printers_condition"))) continue;
+                                            // The bundled profiles carry no per-printer link, so only keep processes whose
+                                            // nozzle (inferred from layer height + line width) matches this printer variant,
+                                            // and tag each with the printer it belongs to so the app can filter per-printer.
+                                            if (!Slic3rUtils.layerHeightFitsNozzle(printConfig.get("layer_height"), nozzle)
+                                                    || !Slic3rUtils.lineWidthFitsNozzle(printConfig.get("line_width"), nozzle)) continue;
+                                            ConfigObject tagged = new ConfigObject(printConfig);
+                                            if (android.text.TextUtils.isEmpty(tagged.get("compatible_printers"))) {
+                                                tagged.put("compatible_printers", printerName);
                                             }
+                                            cfg.printConfigs.add(tagged);
                                         }
                                         checker.release();
                                     }
@@ -1629,14 +1503,50 @@ public class SetupActivity extends AppCompatActivity {
                     }
                 }
                 try {
-                    if (Prefs.getCloudAPIToken() == null || SliceBeam.CONFIG == null) {
+                    if (SliceBeam.CONFIG == null) {
+                        // First-time setup: adopt the freshly built config wholesale.
                         SliceBeam.getCurrentConfigFile().delete();
                         SliceBeam.CONFIG = cfg;
                         FileOutputStream fos = new FileOutputStream(SliceBeam.getConfigFile());
                         fos.write(cfg.serialize().getBytes(StandardCharsets.UTF_8));
                         fos.close();
+                    } else if (Prefs.getCloudAPIToken() == null) {
+                        // Re-running setup with an existing config (e.g. "Add printer"): merge the
+                        // newly selected presets into what the user already has instead of wiping it.
+                        Slic3rConfigWrapper existing = SliceBeam.CONFIG;
+                        for (ConfigObject p : cfg.printerConfigs)
+                            if (existing.findPrinter(p.getTitle()) == null) existing.printerConfigs.add(p);
+                        for (ConfigObject f : cfg.filamentConfigs)
+                            if (existing.findFilament(f.getTitle()) == null) existing.filamentConfigs.add(f);
+                        // Processes are tagged per-printer (compatible_printers), so a same-named process
+                        // for a different printer is NOT a duplicate — key on title + compatible_printers.
+                        for (ConfigObject pr : cfg.printConfigs) {
+                            boolean dup = false;
+                            for (ConfigObject ex : existing.printConfigs) {
+                                if (ex.getTitle().equals(pr.getTitle())
+                                        && java.util.Objects.equals(ex.get("compatible_printers"), pr.get("compatible_printers"))) {
+                                    dup = true;
+                                    break;
+                                }
+                            }
+                            if (!dup) existing.printConfigs.add(pr);
+                        }
+
+                        // Switch the active selection to the newly added printer and its defaults.
+                        String np = cfg.presets != null ? cfg.presets.get("printer") : null;
+                        if (np != null && existing.findPrinter(np) != null) {
+                            existing.presets.put("printer", np);
+                            String npr = cfg.presets.get("print");
+                            if (npr != null && existing.findPrint(npr) != null) existing.presets.put("print", npr);
+                            String nf = cfg.presets.get("filament");
+                            if (nf != null && existing.findFilament(nf) != null) existing.presets.put("filament", nf);
+                        }
+                        SliceBeam.getCurrentConfigFile().delete();
+                        SliceBeam.saveConfig();
                     }
 
+                    // The active selection just changed — drop any stale unsaved edits.
+                    SliceBeam.clearLiveDiffs();
                     startActivity(new Intent(SetupActivity.this, MainActivity.class));
                     finish();
                 } catch (Exception e) {
@@ -1659,7 +1569,7 @@ public class SetupActivity extends AppCompatActivity {
     }
 
     public enum AccentColors {
-        DEFAULT(0xff38ef7d),
+        DEFAULT(0xff1ac5a2),    // OrcaSlicer signature blue-green teal
         BLUE(0xff5492f5),
         LIGHT_BLUE(0xff6dd5fa),
         RED(0xffe94056),
@@ -1691,6 +1601,7 @@ public class SetupActivity extends AppCompatActivity {
         private String description;
         private String indexUrl;
         private boolean checked;
+        private boolean localAssets;
 
         @Override
         public RepoHolderView onCreateView(Context ctx) {

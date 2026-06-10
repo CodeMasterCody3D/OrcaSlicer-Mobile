@@ -1,14 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Pavel Mikuš @Godrak, Vojtěch Bubník @bubnikv, Lukáš Matěna @lukasmatena, Enrico Turri @enricoturri1966, Filip Sykala @Jony01, Lukáš Hejl @hejllukas, Tomáš Mészáros @tamasmeszaros
-///|/ Copyright (c) 2016 Sakari Kapanen @Flannelhead
-///|/ Copyright (c) Slic3r 2013 - 2016 Alessandro Ranellucci @alranel
-///|/
-///|/ ported from lib/Slic3r/ExPolygon.pm:
-///|/ Copyright (c) Prusa Research 2017 - 2022 Vojtěch Bubník @bubnikv
-///|/ Copyright (c) Slic3r 2011 - 2014 Alessandro Ranellucci @alranel
-///|/ Copyright (c) 2012 Mark Hindess
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_ExPolygon_hpp_
 #define slic3r_ExPolygon_hpp_
 
@@ -67,7 +56,7 @@ public:
     bool on_boundary(const Point &point, double eps) const;
     // Projection of a point onto the polygon.
     Point point_projection(const Point &point) const;
-
+    void symmetric_y(const coord_t &y_axis);
     // Does this expolygon overlap another expolygon?
     // Either the ExPolygons intersect, or one is fully inside the other,
     // and it is not inside a hole of the other expolygon.
@@ -203,6 +192,25 @@ inline Linesf to_unscaled_linesf(const ExPolygons &src)
     return lines;
 }
 
+inline Linesf3 to_unscaled_linesf3(const ExPolygons& src)
+{
+    Linesf3 lines;
+    lines.reserve(count_points(src));
+    for (ExPolygons::const_iterator it_expoly = src.begin(); it_expoly != src.end(); ++it_expoly) {
+        for (size_t i = 0; i <= it_expoly->holes.size(); ++i) {
+            const Points& points     = ((i == 0) ? it_expoly->contour : it_expoly->holes[i - 1]).points;
+            Vec2d         unscaled_a = unscaled(points.front());
+            Vec2d         unscaled_b = unscaled_a;
+            for (Points::const_iterator it = points.begin() + 1; it != points.end(); ++it) {
+                unscaled_b = unscaled(*(it));
+                lines.push_back(Linef3(unscaled_a, unscaled_b, 0));
+                unscaled_a = unscaled_b;
+            }
+            lines.push_back(Linef3(unscaled_a, unscaled(points.front()), 0));
+        }
+    }
+    return lines;
+}
 
 inline Points to_points(const ExPolygons &src)
 {
@@ -446,7 +454,7 @@ inline void expolygons_rotate(ExPolygons &expolys, double angle)
         expoly.rotate(angle);
 }
 
-inline bool expolygons_contain(const ExPolygons &expolys, const Point &pt, bool border_result = true)
+inline bool expolygons_contain(ExPolygons &expolys, const Point &pt, bool border_result = true)
 {
     for (const ExPolygon &expoly : expolys)
         if (expoly.contains(pt, border_result))
@@ -466,6 +474,11 @@ inline ExPolygons expolygons_simplify(const ExPolygons &expolys, double toleranc
 // Do expolygons match? If they match, they must have the same topology,
 // however their contours may be rotated.
 bool expolygons_match(const ExPolygon &l, const ExPolygon &r);
+
+bool overlaps(const ExPolygons& expolys1, const ExPolygons& expolys2);
+bool overlaps(const ExPolygons& expolys, const ExPolygon& expoly);
+
+Point projection_onto(const ExPolygons& expolys, const Point& pt);
 
 BoundingBox get_extents(const ExPolygon &expolygon);
 BoundingBox get_extents(const ExPolygons &expolygons);

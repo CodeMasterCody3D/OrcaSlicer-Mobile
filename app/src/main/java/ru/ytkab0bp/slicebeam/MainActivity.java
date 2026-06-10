@@ -64,6 +64,7 @@ import ru.ytkab0bp.slicebeam.navigation.Fragment;
 import ru.ytkab0bp.slicebeam.navigation.MobileNavigationDelegate;
 import ru.ytkab0bp.slicebeam.navigation.NavigationDelegate;
 import ru.ytkab0bp.slicebeam.slic3r.Model;
+import ru.ytkab0bp.slicebeam.slic3r.Native;
 import ru.ytkab0bp.slicebeam.slic3r.Slic3rConfigWrapper;
 import ru.ytkab0bp.slicebeam.slic3r.Slic3rRuntimeError;
 import ru.ytkab0bp.slicebeam.theme.ThemesRepo;
@@ -88,6 +89,10 @@ public class MainActivity extends AppCompatActivity {
     public static boolean IS_GENERATING_AI_MODEL;
 
     public static File aiTempFile;
+
+    private interface BundleProfileFinder {
+        ConfigObject find(String name);
+    }
 
     private static SparseArray<NavigationDelegate> liveDelegate = new SparseArray<>();
     private static int lastId;
@@ -304,7 +309,7 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                if (fileName.endsWith(".orca_printer")) {
+                if (isOrcaBundleFile(fileName)) {
                     loadConvertedProfile(uri);
                     return;
                 }
@@ -351,132 +356,60 @@ public class MainActivity extends AppCompatActivity {
     private void loadConvertedProfile(Uri uri) {
         String tag = UUID.randomUUID().toString();
         SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(SnackbarsLayout.Type.LOADING, R.string.OrcaConversionPleaseWait).tag(tag));
-        File f = new File(SliceBeam.getModelCacheDir(), "orca_conv.zip");
-        IOUtils.IO_POOL.submit(()->{
+
+        IOUtils.IO_POOL.submit(() -> {
+            File copiedArchive = null;
+            File extractDir = new File(SliceBeam.getModelCacheDir(), "orca_conv_" + UUID.randomUUID());
             try {
-                InputStream in = getContentResolver().openInputStream(uri);
-                FileOutputStream fos = new FileOutputStream(f);
-                byte[] buffer = new byte[10240];
-                int c;
-                while ((c = in.read(buffer)) != -1) {
-                    fos.write(buffer, 0, c);
+                copiedArchive = File.createTempFile("orca_conv_", ".zip", SliceBeam.getModelCacheDir());
+                try (InputStream in = getContentResolver().openInputStream(uri);
+                     FileOutputStream fos = new FileOutputStream(copiedArchive)) {
+                    if (in == null) {
+                        throw new FileNotFoundException(String.valueOf(uri));
+                    }
+
+                    byte[] buffer = new byte[10240];
+                    int c;
+                    while ((c = in.read(buffer)) != -1) {
+                        fos.write(buffer, 0, c);
+                    }
                 }
-                fos.close();
-                in.close();
 
-                ZipFile zf = new ZipFile(f);
-                JSONObject bundle = new JSONObject(IOUtils.readString(zf.getInputStream(zf.getEntry("bundle_structure.json"))));
-                if (!bundle.get("bundle_type").equals("printer config bundle")) {
-                    zf.close();
+                if (!extractDir.mkdirs() && !extractDir.isDirectory()) {
+                    throw new IOException("Failed to create temporary extraction directory");
+                }
 
+                String manifest = Native.orca_bundle_read(copiedArchive.getAbsolutePath(), extractDir.getAbsolutePath());
+                if (manifest == null) {
+                    throw new IOException("Failed to read Orca bundle");
+                }
+
+                JSONObject root = new JSONObject(manifest);
+                JSONObject bundle = new JSONObject(root.getString("bundle_structure_json"));
+                if (!bundle.optString("bundle_type", "").endsWith("config bundle")) {
                     SliceBeam.EVENT_BUS.fireEvent(new NeedDismissSnackbarEvent(tag));
                     ViewUtils.postOnMainThread(() -> new BeamAlertDialogBuilder(this)
                             .setTitle(R.string.MenuFileImportProfilesFailed)
                             .setMessage(R.string.OrcaConversionNotAConfigBundle)
                             .setPositiveButton(android.R.string.ok, null)
                             .show());
-
                     return;
                 }
 
-                Slic3rConfigWrapper w = new Slic3rConfigWrapper();
-                if (bundle.has("process_config")) {
-                    JSONArray arr = bundle.getJSONArray("process_config");
-                    List<String> names = new ArrayList<>();
-                    List<String> stripped = new ArrayList<>();
-                    for (int i = 0; i < arr.length(); i++) {
-                        String v = arr.getString(i);
-                        names.add(v);
-                        stripped.add(v.substring(v.indexOf('/') + 1, v.length() - 5));
-                    }
-
-                    for (String name : names) {
-                        w.printConfigs.add(IOUtils.configJsonToIni(new JSONObject(IOUtils.readString(zf.getInputStream(zf.getEntry(name)))), "process", Slic3rConfigWrapper.PRINT_CONFIG_KEYS, stripped));
-                    }
-                    for (ConfigObject obj : w.printConfigs) {
-                        String inherit = obj.get("inherits");
-                        while (inherit != null) {
-                            ConfigObject _obj = w.findPrint(inherit);
-                            if (_obj == null) throw new IOUtils.MissingProfileException(inherit);
-
-                            obj.values.remove("inherits");
-                            HashMap<String, String> newMap = new HashMap<>();
-                            newMap.putAll(_obj.values);
-                            newMap.putAll(obj.values);
-                            obj.values = newMap;
-
-                            inherit = obj.values.get("inherits");
-                        }
-                    }
-                }
-                if (bundle.has("filament_config")) {
-                    JSONArray arr = bundle.getJSONArray("filament_config");
-                    List<String> names = new ArrayList<>();
-                    List<String> stripped = new ArrayList<>();
-                    for (int i = 0; i < arr.length(); i++) {
-                        String v = arr.getString(i);
-                        names.add(v);
-                        stripped.add(v.substring(v.indexOf('/') + 1, v.length() - 5));
-                    }
-
-                    for (String name : names) {
-                        w.filamentConfigs.add(IOUtils.configJsonToIni(new JSONObject(IOUtils.readString(zf.getInputStream(zf.getEntry(name)))), "filament", Slic3rConfigWrapper.FILAMENT_CONFIG_KEYS, stripped));
-                    }
-                    for (ConfigObject obj : w.filamentConfigs) {
-                        String inherit = obj.get("inherits");
-                        while (inherit != null) {
-                            ConfigObject _obj = w.findFilament(inherit);
-                            if (_obj == null) throw new IOUtils.MissingProfileException(inherit);
-
-                            obj.values.remove("inherits");
-                            HashMap<String, String> newMap = new HashMap<>();
-                            newMap.putAll(_obj.values);
-                            newMap.putAll(obj.values);
-                            obj.values = newMap;
-
-                            inherit = obj.values.get("inherits");
-                        }
-                    }
-                }
-                if (bundle.has("printer_config")) {
-                    JSONArray arr = bundle.getJSONArray("printer_config");
-                    List<String> names = new ArrayList<>();
-                    List<String> stripped = new ArrayList<>();
-                    for (int i = 0; i < arr.length(); i++) {
-                        String v = arr.getString(i);
-                        names.add(v);
-                        stripped.add(v.substring(v.indexOf('/') + 1));
-                    }
-
-                    for (String name : names) {
-                        w.printerConfigs.add(IOUtils.configJsonToIni(new JSONObject(IOUtils.readString(zf.getInputStream(zf.getEntry(name)))), "machine", Slic3rConfigWrapper.PRINTER_CONFIG_KEYS, stripped));
-                    }
-                    for (ConfigObject obj : w.printerConfigs) {
-                        String inherit = obj.get("inherits");
-                        while (inherit != null) {
-                            ConfigObject _obj = w.findPrinter(inherit);
-                            if (_obj == null) throw new IOUtils.MissingProfileException(inherit);
-
-                            obj.values.remove("inherits");
-                            HashMap<String, String> newMap = new HashMap<>();
-                            newMap.putAll(_obj.values);
-                            newMap.putAll(obj.values);
-                            obj.values = newMap;
-
-                            inherit = obj.values.get("inherits");
-                        }
-                    }
-                }
-
-                zf.close();
-
+                importOrcaBundle(root);
                 SliceBeam.EVENT_BUS.fireEvent(new NeedDismissSnackbarEvent(tag));
-                loadIniForImport(new ByteArrayInputStream(w.serialize().getBytes(StandardCharsets.UTF_8)));
             } catch (IOUtils.MissingProfileException ep) {
                 SliceBeam.EVENT_BUS.fireEvent(new NeedDismissSnackbarEvent(tag));
                 ViewUtils.postOnMainThread(() -> new BeamAlertDialogBuilder(this)
                         .setTitle(R.string.MenuFileImportProfilesFailed)
                         .setMessage(getString(R.string.MenuFileImportProfilesFailedBaseProfileNotFound, ep.profile))
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show());
+            } catch (IOException e) {
+                SliceBeam.EVENT_BUS.fireEvent(new NeedDismissSnackbarEvent(tag));
+                ViewUtils.postOnMainThread(() -> new BeamAlertDialogBuilder(this)
+                        .setTitle(R.string.MenuFileImportProfilesFailed)
+                        .setMessage(e.toString())
                         .setPositiveButton(android.R.string.ok, null)
                         .show());
             } catch (Exception e) {
@@ -486,8 +419,146 @@ public class MainActivity extends AppCompatActivity {
                         .setMessage(e.toString())
                         .setPositiveButton(android.R.string.ok, null)
                         .show());
+            } finally {
+                if (copiedArchive != null) {
+                    //noinspection ResultOfMethodCallIgnored
+                    copiedArchive.delete();
+                }
+                deleteRecursively(extractDir);
             }
         });
+    }
+
+    private boolean isOrcaBundleFile(String fileName) {
+        return fileName.endsWith(".orca_printer") || fileName.endsWith(".orca_filament") || fileName.endsWith(".zip");
+    }
+
+    private void deleteRecursively(File file) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteRecursively(child);
+                }
+            }
+        }
+        //noinspection ResultOfMethodCallIgnored
+        file.delete();
+    }
+
+    private void addInstalledProfileTitles(List<String> names, List<ConfigObject> installed) {
+        if (installed == null) {
+            return;
+        }
+
+        for (ConfigObject obj : installed) {
+            if (obj != null && obj.getTitle() != null && !names.contains(obj.getTitle())) {
+                names.add(obj.getTitle());
+            }
+        }
+    }
+
+    private void resolveBundleInherits(List<ConfigObject> configs, BundleProfileFinder bundleFinder, BundleProfileFinder fallbackFinder) throws IOUtils.MissingProfileException {
+        for (ConfigObject obj : configs) {
+            String inherit = obj.get("inherits");
+            while (inherit != null) {
+                ConfigObject base = bundleFinder.find(inherit);
+                if (base == null && fallbackFinder != null) {
+                    base = fallbackFinder.find(inherit);
+                }
+                if (base == null) {
+                    obj.values.remove("inherits");
+                    break;
+                }
+
+                obj.values.remove("inherits");
+                HashMap<String, String> newMap = new HashMap<>();
+                newMap.putAll(base.values);
+                newMap.putAll(obj.values);
+                obj.values = newMap;
+
+                inherit = obj.values.get("inherits");
+            }
+        }
+    }
+
+    private void importOrcaBundle(JSONObject root) throws Exception {
+        JSONObject bundle = new JSONObject(root.getString("bundle_structure_json"));
+
+        HashMap<String, String> files = new HashMap<>();
+        JSONArray fileArray = root.getJSONArray("files");
+        for (int i = 0; i < fileArray.length(); i++) {
+            JSONObject file = fileArray.getJSONObject(i);
+            files.put(file.getString("path"), file.getString("content"));
+        }
+
+        Slic3rConfigWrapper w = new Slic3rConfigWrapper();
+        if (bundle.has("process_config")) {
+            JSONArray arr = bundle.getJSONArray("process_config");
+            List<String> names = new ArrayList<>();
+            List<String> stripped = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                String name = arr.getString(i);
+                names.add(name);
+                stripped.add(name.substring(name.indexOf('/') + 1, name.length() - 5));
+            }
+            addInstalledProfileTitles(stripped, SliceBeam.CONFIG.printConfigs);
+
+            for (String name : names) {
+                String content = files.get(name);
+                if (content == null) {
+                    throw new FileNotFoundException(name);
+                }
+                w.printConfigs.add(IOUtils.configJsonToIni(new JSONObject(content), "process", Slic3rConfigWrapper.PRINT_CONFIG_KEYS, stripped));
+            }
+            resolveBundleInherits(w.printConfigs, w::findPrint, name -> SliceBeam.CONFIG.findPrint(name));
+        }
+        if (bundle.has("filament_config")) {
+            JSONArray arr = bundle.getJSONArray("filament_config");
+            List<String> names = new ArrayList<>();
+            List<String> stripped = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                String name = arr.getString(i);
+                names.add(name);
+                stripped.add(name.substring(name.indexOf('/') + 1, name.length() - 5));
+            }
+            addInstalledProfileTitles(stripped, SliceBeam.CONFIG.filamentConfigs);
+
+            for (String name : names) {
+                String content = files.get(name);
+                if (content == null) {
+                    throw new FileNotFoundException(name);
+                }
+                w.filamentConfigs.add(IOUtils.configJsonToIni(new JSONObject(content), "filament", Slic3rConfigWrapper.FILAMENT_CONFIG_KEYS, stripped));
+            }
+            resolveBundleInherits(w.filamentConfigs, w::findFilament, name -> SliceBeam.CONFIG.findFilament(name));
+        }
+        if (bundle.has("printer_config")) {
+            JSONArray arr = bundle.getJSONArray("printer_config");
+            List<String> names = new ArrayList<>();
+            List<String> stripped = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                String name = arr.getString(i);
+                names.add(name);
+                stripped.add(name.substring(name.indexOf('/') + 1, name.length() - 5));
+            }
+            addInstalledProfileTitles(stripped, SliceBeam.CONFIG.printerConfigs);
+
+            for (String name : names) {
+                String content = files.get(name);
+                if (content == null) {
+                    throw new FileNotFoundException(name);
+                }
+                w.printerConfigs.add(IOUtils.configJsonToIni(new JSONObject(content), "machine", Slic3rConfigWrapper.PRINTER_CONFIG_KEYS, stripped));
+            }
+            resolveBundleInherits(w.printerConfigs, w::findPrinter, name -> SliceBeam.CONFIG.findPrinter(name));
+        }
+
+        loadIniForImport(new ByteArrayInputStream(w.serialize().getBytes(StandardCharsets.UTF_8)));
     }
 
     private void generateAiModel(Bitmap bm) {
@@ -763,7 +834,7 @@ public class MainActivity extends AppCompatActivity {
                     .show();
             return;
         }
-        if (fileName.endsWith(".orca_printer")) {
+        if (isOrcaBundleFile(fileName)) {
             loadConvertedProfile(uri);
             return;
         }

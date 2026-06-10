@@ -8,6 +8,7 @@
 #include "ShadersES.hpp"
 #include "OpenGLUtils.hpp"
 #include "Utils.hpp"
+#include "half.hpp"
 
 #include <map>
 #include <assert.h>
@@ -1040,6 +1041,20 @@ void ViewerImpl::load(GCodeInputData&& gcode_data)
     extract_pos_and_or_hwa(m_vertices, m_travels_radius, m_wipes_radius, m_valid_lines_bitset, &positions, &heights_widths_angles, true);
 
     if (!positions.empty()) {
+        // Calculate bounding box for quantization
+        m_positions_min = { 1e10f, 1e10f, 1e10f };
+        m_positions_max = { -1e10f, -1e10f, -1e10f };
+        for (const auto& p : positions) {
+            for (int k = 0; k < 3; ++k) {
+                m_positions_min[k] = std::min(m_positions_min[k], p[k]);
+                m_positions_max[k] = std::max(m_positions_max[k], p[k]);
+            }
+        }
+        // Ensure some volume even for single points
+        for (int k = 0; k < 3; ++k) {
+            if (m_positions_max[k] <= m_positions_min[k]) m_positions_max[k] = m_positions_min[k] + 1.0f;
+        }
+
 #ifdef ENABLE_OPENGL_ES
         m_texture_data.init(positions.size());
         // create and fill position textures
@@ -1142,6 +1157,47 @@ void ViewerImpl::update_enabled_entities()
         else if (v.is_extrusion()) {
             if (!m_settings.extrusion_roles_visibility[size_t(v.role)])
                 continue;
+
+            // Selective rendering optimization for mobile performance
+            const bool is_selected_object = (m_settings.selected_object_id < 0 || v.object_label_id == m_settings.selected_object_id);
+            
+            if (m_settings.fast_mode || !is_selected_object) {
+                // For non-selected objects or in fast mode, only render walls + floating extrusions
+                // (overhang perimeters and bridges) for non-top layers.
+                // Always render the bottom layer (layer_id == 0).
+                if (v.layer_id != 0 &&
+                    v.role != EGCodeExtrusionRole::ExternalPerimeter &&
+                    v.role != EGCodeExtrusionRole::Perimeter &&
+                    v.role != EGCodeExtrusionRole::OverhangPerimeter &&
+                    v.role != EGCodeExtrusionRole::BridgeInfill &&
+                    v.layer_id != m_layers.get_view_range()[1]) {
+                    continue;
+                }
+            }
+
+            if (is_selected_object && m_settings.infill_visibility_depth >= 0) {
+                // Hide internal structures that are too deep below the current top layer (only for selected object).
+                // Always keep the bottom `depth` layers fully solid so the model floor (e.g. the Benchy
+                // bottom text / overhangs) never vanishes and you can't see through the model.
+                const uint32_t depth = static_cast<uint32_t>(m_settings.infill_visibility_depth);
+                if (v.layer_id >= depth) {
+                    // Never hide "floating" extrusions printed over air (overhang perimeters and
+                    // bridges). OverhangPerimeter is already excluded below by not being listed;
+                    // BridgeInfill is deliberately NOT culled so the Benchy roof underside and the
+                    // overhanging bottom text stay visible at any depth, not just the top/bottom band.
+                    bool is_internal = (v.role == EGCodeExtrusionRole::InternalInfill ||
+                                        v.role == EGCodeExtrusionRole::SolidInfill ||
+                                        v.role == EGCodeExtrusionRole::GapFill ||
+                                        v.role == EGCodeExtrusionRole::SupportMaterial ||
+                                        v.role == EGCodeExtrusionRole::SupportMaterialInterface);
+                    if (is_internal) {
+                        const uint32_t top_layer = static_cast<uint32_t>(m_layers.get_view_range()[1]);
+                        if (v.layer_id + depth < top_layer) {
+                            continue;
+                        }
+                    }
+                }
+            }
         }
         else
             continue;
@@ -1289,6 +1345,30 @@ void ViewerImpl::set_time_mode(ETimeMode mode)
 {
     m_settings.time_mode = mode;
     m_settings.update_colors = true;
+}
+
+void ViewerImpl::set_infill_visibility_depth(int depth)
+{
+    if (m_settings.infill_visibility_depth != depth) {
+        m_settings.infill_visibility_depth = depth;
+        m_settings.update_enabled_entities = true;
+    }
+}
+
+void ViewerImpl::set_fast_mode(bool fast_mode)
+{
+    if (m_settings.fast_mode != fast_mode) {
+        m_settings.fast_mode = fast_mode;
+        m_settings.update_enabled_entities = true;
+    }
+}
+
+void ViewerImpl::set_selected_object_id(int id)
+{
+    if (m_settings.selected_object_id != id) {
+        m_settings.selected_object_id = id;
+        m_settings.update_enabled_entities = true;
+    }
 }
 
 void ViewerImpl::set_layers_view_range(Interval::value_type min, Interval::value_type max)

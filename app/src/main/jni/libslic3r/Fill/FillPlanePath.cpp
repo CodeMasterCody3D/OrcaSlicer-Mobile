@@ -1,12 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2022 Vojtěch Bubník @bubnikv, Lukáš Matěna @lukasmatena
-///|/
-///|/ ported from lib/Slic3r/Fill/Concentric.pm:
-///|/ Copyright (c) Prusa Research 2016 Vojtěch Bubník @bubnikv
-///|/ Copyright (c) Slic3r 2011 - 2015 Alessandro Ranellucci @alranel
-///|/ Copyright (c) 2012 Mark Hindess
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "../ClipperUtils.hpp"
 #include "../ShortestPath.hpp"
 #include "../Surface.hpp"
@@ -15,9 +6,9 @@
 
 namespace Slic3r {
 
-class InfillPolylineClipper : public FillPlanePath::InfillPolylineOutput {
+class InfillPolylineClipper : public InfillPolylineOutput {
 public:
-    InfillPolylineClipper(const BoundingBox bbox, const double scale_out) : FillPlanePath::InfillPolylineOutput(scale_out), m_bbox(bbox) {}
+    InfillPolylineClipper(const BoundingBox bbox, const double scale_out) : InfillPolylineOutput(scale_out), m_bbox(bbox) {}
 
     void            add_point(const Vec2d &pt);
     Points&&        result() { return std::move(m_out); }
@@ -90,6 +81,9 @@ void FillPlanePath::_fill_surface_single(
 
     BoundingBox snug_bounding_box = get_extents(expolygon).inflated(SCALED_EPSILON);
 
+    // Expand the bounding box to avoid artifacts at the edges
+    snug_bounding_box.offset(scale_(this->spacing)*params.multiline); 
+
     // Rotated bounding box of the area to fill in with the pattern.
     BoundingBox bounding_box = align ?
         // Sparse infill needs to be aligned across layers. Align infill across layers using the object's bounding box.
@@ -106,7 +100,7 @@ void FillPlanePath::_fill_surface_single(
 
     Polyline polyline;
     {
-        auto distance_between_lines = scaled<double>(this->spacing) / params.density;
+        auto distance_between_lines = scaled<double>(this->spacing) * params.multiline / params.density;
         auto min_x = coord_t(ceil(coordf_t(bounding_box.min.x()) / distance_between_lines));
         auto min_y = coord_t(ceil(coordf_t(bounding_box.min.y()) / distance_between_lines));
         auto max_x = coord_t(ceil(coordf_t(bounding_box.max.x()) / distance_between_lines));
@@ -126,19 +120,51 @@ void FillPlanePath::_fill_surface_single(
         }
     }
 
+    Polylines polylines = {polyline};
+
+    // Apply multiline offset if needed
+    multiline_fill(polylines, params, spacing);
+
     if (polyline.size() >= 2) {
-        Polylines polylines = intersection_pl(polyline, expolygon);
-        Polylines chained;
-        if (params.dont_connect() || params.density > 0.5 || polylines.size() <= 1)
-            chained = chain_polylines(std::move(polylines));
-        else
-            connect_infill(std::move(polylines), expolygon, chained, this->spacing, params);
-        // paths must be repositioned and rotated back
-        for (Polyline &pl : chained) {
-            pl.translate(shift.x(), shift.y());
-            pl.rotate(direction.first);
+        polylines = intersection_pl(std::move(polylines), expolygon);
+        if (!polylines.empty()) {
+            Polylines chained;
+            if (params.dont_connect() || params.density > 0.5) {
+                // ORCA: special flag for flow rate calibration
+                auto is_flow_calib = params.extrusion_role == erTopSolidInfill &&
+                                     this->print_object_config->has("calib_flowrate_topinfill_special_order") &&
+                                     this->print_object_config->option("calib_flowrate_topinfill_special_order")->getBool() &&
+                                     dynamic_cast<FillArchimedeanChords*>(this);
+                if (is_flow_calib) {
+                    // We want the spiral part to be printed inside-out
+                    // Find the center spiral line first, by looking for the longest one
+                    auto     it            = std::max_element(polylines.begin(), polylines.end(),
+                                                              [](const Polyline& a, const Polyline& b) { return a.length() < b.length(); });
+                    Polyline center_spiral = std::move(*it);
+
+                    // Ensure the spiral is printed from inside to out
+                    if (center_spiral.first_point().squaredNorm() > center_spiral.last_point().squaredNorm()) {
+                        center_spiral.reverse();
+                    }
+
+                    // Chain the other polylines
+                    polylines.erase(it);
+                    chained = chain_polylines(std::move(polylines));
+
+                    // Then add the center spiral back
+                    chained.push_back(std::move(center_spiral));
+                } else {
+                    chained = chain_polylines(std::move(polylines));
+                }
+            } else
+                connect_infill(std::move(polylines), expolygon, chained, this->spacing, params);
+            // paths must be repositioned and rotated back
+            for (Polyline& pl : chained) {
+                pl.translate(shift.x(), shift.y());
+                pl.rotate(direction.first);
+            }
+            append(polylines_out, std::move(chained));
         }
-        append(polylines_out, std::move(chained));
     }
 }
 

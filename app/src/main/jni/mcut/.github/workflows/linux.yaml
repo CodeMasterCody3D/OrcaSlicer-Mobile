@@ -1,0 +1,59 @@
+name: linux
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        cxx: [g++-10, clang++]
+        build_type: [Debug, Release]
+        std: [11]
+        multithreading: [ON,OFF]
+        os: [ubuntu-latest]
+        include:
+          - cxx: g++-11
+            build_type: Debug
+            std: 20
+            os: ubuntu-20.04
+            install: sudo apt install g++-11
+          - cxx: clang++-11
+            build_type: Debug
+            std: 20
+            os: ubuntu-20.04
+          - cxx: clang++-11
+            build_type: Debug
+            std: 20
+            cxxflags: -stdlib=libc++
+            os: ubuntu-20.04
+            install: sudo apt install libc++-11-dev libc++abi-11-dev
+          - shared: -DMCUT_BUILD_AS_SHARED_LIB=ON
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Create Build Environment
+      run: |
+        ${{matrix.install}}
+        cmake -E make_directory ${{runner.workspace}}/build
+    - name: Configure
+      working-directory: ${{runner.workspace}}/build
+      env:
+        CXX: ${{matrix.cxx}}
+        CXXFLAGS: ${{matrix.cxxflags}}
+      run: |
+        cmake -DCMAKE_BUILD_TYPE=${{matrix.build_type}} ${{matrix.shared}} \
+              -DCMAKE_CXX_STANDARD=${{matrix.std}}  \
+              -DMCUT_BUILD_WITH_COMPUTE_HELPER_THREADPOOL=${{matrix.multithreading}} \
+              $GITHUB_WORKSPACE
+    - name: Build
+      working-directory: ${{runner.workspace}}/build
+      run: |
+        threads=`nproc`
+        cmake --build . --config ${{matrix.build_type}} --parallel $threads
+    - name: Test
+      working-directory: ${{runner.workspace}}/build/bin
+      run: ./mcut_tests #ctest -C ${{matrix.build_type}}
+      #env:
+        #CTEST_OUTPUT_ON_FAILURE: True

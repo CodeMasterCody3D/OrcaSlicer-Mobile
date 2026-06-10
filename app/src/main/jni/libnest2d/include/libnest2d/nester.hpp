@@ -7,6 +7,7 @@
 #include <array>
 #include <algorithm>
 #include <functional>
+#include <string>
 
 #include <libnest2d/geometry_traits.hpp>
 
@@ -69,6 +70,7 @@ class _Item {
     } bb_cache_;
     
     int binid_{BIN_ID_UNSET}, priority_{0};
+    int itemid_{0};
     bool fixed_{false};
     std::function<void(_Item&)> on_packed_;
 
@@ -76,6 +78,16 @@ public:
 
     /// The type of the shape which was handed over as the template argument.
     using ShapeType = RawShape;
+
+    bool is_virt_object = false;
+    bool is_wipe_tower = false;
+    double height = 0.0;
+    int filament_temp_type = -1;
+    int bed_temp = 0;
+    int print_temp = 0;
+    int vitrify_temp = 0;
+    std::vector<int> extrude_ids{0};
+    std::string name;
 
     /**
      * \brief Iterator type for the outer vertices.
@@ -141,6 +153,9 @@ public:
     
     inline void priority(int p) { priority_ = p; }
     inline int priority() const noexcept { return priority_; }
+
+    inline void itemId(int p) { itemid_ = p; }
+    inline int itemId() const noexcept { return itemid_; }
 
     /**
      * @brief Convert the polygon to string representation. The format depends
@@ -866,6 +881,11 @@ public:
     inline _Nester& stopCondition(StopCondition fn)
     {
         stopfn_ = fn; selector_.stopCondition(fn); return *this;
+    }
+
+    inline _Nester& unfitIndicator(std::function<void(std::string)> /*fn*/)
+    {
+        return *this;
     }
 
     inline const PackGroup& lastResult() const

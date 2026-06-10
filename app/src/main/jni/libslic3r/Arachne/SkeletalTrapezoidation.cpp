@@ -3,20 +3,27 @@
 
 #include "SkeletalTrapezoidation.hpp"
 
-#include <stack>
-#include <functional>
-#include <sstream>
-#include <queue>
 #include <boost/log/trivial.hpp>
+#include <boost/polygon/polygon.hpp>
+#include <queue>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <utility>
+#include <cassert>
+#include <cstdlib>
 
-#include "utils/linearAlg2D.hpp"
-#include "Utils.hpp"
-#include "SVG.hpp"
-#include "Geometry/VoronoiVisualUtils.hpp"
-#include "Geometry/VoronoiUtilsCgal.hpp"
-#include "../EdgeGrid.hpp"
+#include "libslic3r/Geometry/VoronoiUtils.hpp"
+#include "ankerl/unordered_dense.h"
+#include "libslic3r/Arachne/SkeletalTrapezoidationEdge.hpp"
+#include "libslic3r/Arachne/SkeletalTrapezoidationJoint.hpp"
+#include "libslic3r/Arachne/utils/ExtrusionJunction.hpp"
+#include "libslic3r/Arachne/utils/ExtrusionLine.hpp"
 
-#include "Geometry/VoronoiUtils.hpp"
+#ifndef NDEBUG
+    #include "libslic3r/EdgeGrid.hpp"
+#endif
 
 #define SKELETAL_TRAPEZOIDATION_BEAD_SEARCH_MAX 1000 //A limit to how long it'll keep searching for adjacent beads. Increasing will re-use beadings more often (saving performance), but search longer for beading (costing performance).
 
@@ -500,7 +507,7 @@ void SkeletalTrapezoidation::generateToolpaths(std::vector<VariableWidthLines> &
     export_graph_to_svg(debug_out_path("ST-updateIsCentral-final-%d.svg", iRun), this->graph, this->outline);
 #endif
 
-    filterCentral(central_filter_dist);
+    filterCentral(central_filter_dist());
 
 #ifdef ARACHNE_DEBUG
     export_graph_to_svg(debug_out_path("ST-filterCentral-final-%d.svg", iRun), this->graph, this->outline);
@@ -687,7 +694,7 @@ void SkeletalTrapezoidation::filterNoncentralRegions()
             BOOST_LOG_TRIVIAL(warning) << "Encountered an uninitialized bead at the boundary!";
         }
         assert(edge.to->data.bead_count >= 0 || edge.to->data.distance_to_boundary == 0);
-        constexpr coord_t max_dist = scaled<coord_t>(0.4);
+        const coord_t max_dist = scaled<coord_t>(0.4);
         filterNoncentralRegions(&edge, edge.to->data.bead_count, 0, max_dist);
     }
 }
@@ -1261,6 +1268,7 @@ static inline Point normal(const Point& p0, coord_t len)
 
 void SkeletalTrapezoidation::applyTransitions(ptr_vector_t<std::list<TransitionEnd>>& edge_transition_ends)
 {
+    const auto _snap_dist = snap_dist();
     for (edge_t& edge : graph.edges)
     {
         if (edge.twin->data.hasTransitionEnds())
@@ -1306,7 +1314,7 @@ void SkeletalTrapezoidation::applyTransitions(ptr_vector_t<std::list<TransitionE
             coord_t new_node_bead_count = transition_end.is_lower_end? transition_end.lower_bead_count : transition_end.lower_bead_count + 1;
             coord_t end_pos = transition_end.pos;
             node_t* close_node = (end_pos < ab_size / 2)? from : to;
-            if ((end_pos < snap_dist || end_pos > ab_size - snap_dist)
+            if ((end_pos < _snap_dist || end_pos > ab_size - _snap_dist)
                 && close_node->data.bead_count == new_node_bead_count
             )
             {
@@ -1348,6 +1356,7 @@ bool SkeletalTrapezoidation::isEndOfCentral(const edge_t& edge_to) const
 
 void SkeletalTrapezoidation::generateExtraRibs()
 {
+    const auto _snap_dist = snap_dist();
     for (auto edge_it = graph.edges.begin(); edge_it != graph.edges.end(); ++edge_it)
     {
         edge_t& edge = *edge_it;
@@ -1391,7 +1400,7 @@ void SkeletalTrapezoidation::generateExtraRibs()
             assert(end_pos > 0);
             assert(end_pos < ab_size);
             node_t* close_node = (end_pos < ab_size / 2)? from : to;
-            if ((end_pos < snap_dist || end_pos > ab_size - snap_dist)
+            if ((end_pos < _snap_dist || end_pos > ab_size - _snap_dist)
                 && close_node->data.bead_count == new_node_bead_count
             )
             {
@@ -1551,6 +1560,7 @@ SkeletalTrapezoidation::edge_t* SkeletalTrapezoidation::getQuadMaxRedgeTo(edge_t
 
 void SkeletalTrapezoidation::propagateBeadingsUpward(std::vector<edge_t*>& upward_quad_mids, ptr_vector_t<BeadingPropagation>& node_beadings)
 {
+    const auto _central_filter_dist = central_filter_dist();
     for (auto upward_quad_mids_it = upward_quad_mids.rbegin(); upward_quad_mids_it != upward_quad_mids.rend(); ++upward_quad_mids_it)
     {
         edge_t* upward_edge = *upward_quad_mids_it;
@@ -1567,7 +1577,7 @@ void SkeletalTrapezoidation::propagateBeadingsUpward(std::vector<edge_t*>& upwar
         { // Only propagate to places where there is place
             continue;
         }
-        assert((upward_edge->from->data.distance_to_boundary != upward_edge->to->data.distance_to_boundary || shorter_then(upward_edge->to->p - upward_edge->from->p, central_filter_dist)) && "zero difference R edges should always be central");
+        assert((upward_edge->from->data.distance_to_boundary != upward_edge->to->data.distance_to_boundary || shorter_then(upward_edge->to->p - upward_edge->from->p, _central_filter_dist)) && "zero difference R edges should always be central");
         coord_t length = (upward_edge->to->p - upward_edge->from->p).cast<int64_t>().norm();
         BeadingPropagation upper_beading = lower_beading;
         upper_beading.dist_to_bottom_source += length;
@@ -1797,7 +1807,7 @@ std::shared_ptr<SkeletalTrapezoidationJoint::BeadingPropagation> SkeletalTrapezo
     {
         if (node->data.bead_count == -1)
         { // This bug is due to too small central edges
-            constexpr coord_t nearby_dist = scaled<coord_t>(0.1);
+            const coord_t nearby_dist = scaled<coord_t>(0.1);
             auto nearest_beading = getNearestBeading(node, nearby_dist);
             if (nearest_beading)
             {

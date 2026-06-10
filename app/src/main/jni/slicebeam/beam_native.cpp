@@ -1,4 +1,8 @@
 #include <android/log.h>
+#include <typeinfo>
+#include <set>
+
+#include <thread>
 
 #include <jni.h>
 #include "libslic3r/libslic3r.h"
@@ -6,10 +10,20 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/ModelArrange.hpp"
-#include "libslic3r/SVG.hpp"
+#include <libslic3r/SVG.hpp>
+#include <libslic3r/GCode.hpp>
+#include <libslic3r/Print.hpp>
+#include <libslic3r/Utils.hpp>
+#include <libslic3r/AppConfig.hpp>
+#include <libslic3r/CutUtils.hpp>
+#include <android/log.h>
+#define LOG_TAG "NativeCut"
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/Arrange.hpp"
 #include "libslic3r/AABBMesh.hpp"
+#include "libslic3r/TriangleSelector.hpp"
+#include "libslic3r/calib.hpp"
 #include "libslic3r/Geometry/ConvexHull.hpp"
 #include "libslic3r/Format/3mf.hpp"
 #include "bbl/Orient.hpp"
@@ -43,6 +57,15 @@ struct GLModelRef {
     AABBMesh* emesh;
     std::vector<stl_normal> normals;
     Vec3d flatten_normal;
+};
+// Multi-color painting session, bound to one ModelObject's first volume. Holds a TriangleSelector
+// over the volume mesh plus an AABBMesh for ray-casting touch points to a facet.
+struct PaintSessionRef {
+    ModelRef* model = nullptr;
+    int objIdx = -1;
+    TriangleMesh mesh;
+    AABBMesh* emesh = nullptr;
+    std::unique_ptr<Slic3r::TriangleSelector> selector;
 };
 struct ShaderRef {
     GLShaderProgram program;
@@ -157,7 +180,7 @@ extern "C" {
         PrintConfigDef nDef;
         for (std::string key : nDef.keys()) {
             const ConfigOptionDef* nCfgDef = nDef.get(key);
-            ConfigOptionEnumDef* enumDef = nullptr;
+            bool isEnum = false;
             jobject cfgDef = env->NewObject(configOptionDefClass, configOptionDefCtr);
             const char* typeStr;
             switch (nCfgDef->type) {
@@ -212,7 +235,7 @@ extern "C" {
                     break;
                 case Slic3r::coEnum:
                     typeStr = "ENUM";
-                    enumDef = nCfgDef->enum_def.get();
+                    isEnum = true;
                     break;
                 case Slic3r::coEnums:
                     typeStr = "ENUMS";
@@ -246,12 +269,6 @@ extern "C" {
                 case Slic3r::ConfigOptionDef::GUIType::one_string:
                     guiTypeStr = "ONE_STRING";
                     break;
-                case Slic3r::ConfigOptionDef::GUIType::select_close:
-                    guiTypeStr = "SELECT_CLOSE";
-                    break;
-                case Slic3r::ConfigOptionDef::GUIType::password:
-                    guiTypeStr = "PASSWORD";
-                    break;
             }
 
             const char* techStr;
@@ -283,7 +300,7 @@ extern "C" {
                     modeStr = "EXPERT";
                     break;
                 default:
-                case Slic3r::comUndef:
+                case Slic3r::comDevelop:
                     modeStr = "UNDEFINED";
                     break;
             }
@@ -316,8 +333,10 @@ extern "C" {
             env->SetFloatField(cfgDef, minField, nCfgDef->min);
             env->SetFloatField(cfgDef, maxField, nCfgDef->max);
             env->SetObjectField(cfgDef, modeField, modeValue);
-            if (enumDef != nullptr) {
-                const std::vector<std::string> labels = enumDef->labels();
+            if (isEnum) {
+                // OrcaSlicer stores enum labels/values as plain vectors on ConfigOptionDef
+                // (PrusaSlicer's enum_def/ConfigOptionEnumDef wrapper does not exist here).
+                const std::vector<std::string>& labels = nCfgDef->enum_labels;
                 jobjectArray labelsArr = env->NewObjectArray(labels.size(), env->FindClass("java/lang/String"), nullptr);
                 for (int i = 0; i < labels.size(); i++) {
                     jobject str = env->NewStringUTF(labels[i].c_str());
@@ -325,7 +344,7 @@ extern "C" {
                     env->DeleteLocalRef(str);
                 }
 
-                std::vector<std::string> values = enumDef->values();
+                const std::vector<std::string>& values = nCfgDef->enum_values;
                 jobjectArray valuesArr = env->NewObjectArray(values.size(), env->FindClass("java/lang/String"), nullptr);
                 for (int i = 0; i < values.size(); i++) {
                     jobject str = env->NewStringUTF(values[i].c_str());
@@ -370,7 +389,7 @@ extern "C" {
         ModelRef* ref;
         try {
             ref = new ModelRef();
-            ref->model = Model::read_from_file(std::string(chars), nullptr, nullptr, Model::LoadAttribute::AddDefaultInstances);
+            ref->model = Model::read_from_file(std::string(chars), nullptr, nullptr, LoadStrategy::AddDefaultInstances);
             ref->base_name = std::string(baseChars);
         } catch (const Slic3r::RuntimeError& e) {
             env->ThrowNew(env->FindClass("ru/ytkab0bp/slicebeam/slic3r/Slic3rRuntimeError"), e.what());
@@ -452,6 +471,49 @@ extern "C" {
         jdoubleArray arr = env->NewDoubleArray(3);
         env->SetDoubleArrayRegion(arr, 0, 3, offset.data());
         return arr;
+    }
+
+    JNIEXPORT jboolean JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1cut(JNIEnv* env, jclass, jlong ptr, jint i, jdouble zHeight, jdouble rotX, jdouble rotY, jboolean keepUpper, jboolean keepLower) {
+        auto model = (Model*)ptr;
+        if (model == nullptr || i < 0 || i >= model->objects.size()) {
+            LOGD("Cut failed: invalid model or index %d", i);
+            return false;
+        }
+        
+        auto object = model->objects[i];
+        auto bbox = object->bounding_box_exact();
+        LOGD("Cut invoked: index=%d zHeight=%f rotX=%f rotY=%f. Object bounds Z: min=%f, max=%f", i, zHeight, rotX, rotY, bbox.min.z(), bbox.max.z());
+        
+        Transform3d cut_matrix = Transform3d::Identity();
+        cut_matrix.translate(Vec3d(0.0, 0.0, zHeight));
+        cut_matrix.rotate(Eigen::AngleAxisd(rotY, Vec3d::UnitY()));
+        cut_matrix.rotate(Eigen::AngleAxisd(rotX, Vec3d::UnitX()));
+        
+        ModelObjectCutAttributes attributes = ModelObjectCutAttribute::InvalidateCutInfo;
+        if (keepUpper) attributes = attributes | ModelObjectCutAttribute::KeepUpper;
+        if (keepLower) attributes = attributes | ModelObjectCutAttribute::KeepLower;
+        
+        Cut cut(object, 0, cut_matrix, attributes);
+        const auto& cut_objects = cut.perform_with_plane();
+        
+        LOGD("Cut returned %zu objects", cut_objects.size());
+        
+        if (cut_objects.empty()) {
+            return false;
+        }
+        
+        bool isFirst = true;
+        for (auto cut_obj : cut_objects) {
+            if (isFirst && cut_objects.size() > 1) {
+                cut_obj->translate(Vec3d(20.0, 20.0, 10.0));
+                isFirst = false;
+            }
+            model->add_object(*cut_obj);
+        }
+        
+        model->delete_object(i);
+        
+        return true;
     }
 
     JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1translate(JNIEnv* env, jclass, jlong ptr, jint i, jdouble x, jdouble y, jdouble z) {
@@ -581,6 +643,10 @@ extern "C" {
     }
 
     JNIEXPORT jlongArray JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1create_1flatten_1planes(JNIEnv* env, jclass, jlong ptr, jint i) {
+        auto model = (Model*)ptr;
+        if (model == nullptr || i < 0 || i >= model->objects.size()) return nullptr;
+        auto obj = model->objects[i];
+        
         ModelRef* ref = (ModelRef*) (intptr_t) ptr;
         const ModelObject* mo = ref->model.objects[i];
         TriangleMesh ch;
@@ -605,7 +671,7 @@ extern "C" {
 
         const int                num_of_facets  = ch.facets_count();
         const std::vector<Vec3f> face_normals   = its_face_normals(ch.its);
-        const std::vector<Vec3i> face_neighbors = its_face_neighbors(ch.its);
+        const std::vector<Vec3i32> face_neighbors = its_face_neighbors(ch.its);
         std::vector<int>         facet_queue(num_of_facets, 0);
         std::vector<bool>        facet_visited(num_of_facets, false);
         int                      facet_queue_cnt = 0;
@@ -628,7 +694,7 @@ extern "C" {
                 int facet_idx = facet_queue[-- facet_queue_cnt];
                 const stl_normal& this_normal = face_normals[facet_idx];
                 if (std::abs(this_normal(0) - (*normal_ptr)(0)) < 0.001 && std::abs(this_normal(1) - (*normal_ptr)(1)) < 0.001 && std::abs(this_normal(2) - (*normal_ptr)(2)) < 0.001) {
-                    const Vec3i face = ch.its.indices[facet_idx];
+                    const Vec3i32 face = ch.its.indices[facet_idx];
                     for (int j=0; j<3; ++j)
                         m_planes.back().vertices.emplace_back(ch.its.vertices[face[j]].cast<double>());
 
@@ -835,7 +901,7 @@ extern "C" {
         obj->config.set("extruder", extruder);
     }
 
-    JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1slice(JNIEnv* env, jclass, jlong ptr, jstring configPath, jstring path, jobject listener) {
+    JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1slice(JNIEnv* env, jclass, jlong ptr, jstring configPath, jstring path, jobject listener, jint numFilaments, jintArray colorsArr, jint calibMode, jdouble calibStart, jdouble calibEnd, jdouble calibStep) {
         try {
             ModelRef* model = (ModelRef*) (intptr_t) ptr;
 
@@ -846,18 +912,167 @@ extern "C" {
             env->ReleaseStringUTFChars(configPath, chars);
             config.normalize_fdm();
 
+            // Multi-color: declare N filaments (resizing all filament vectors) + their colors so the
+            // engine runs MMU segmentation on the painted facets and emits tool changes.
+            if (numFilaments > 1) {
+                // The painting may reference filament indices beyond the palette (e.g. leftover paint
+                // from a larger palette). Cover the highest painted filament so export never indexes
+                // a per-filament vector out of range.
+                int maxPaintedState = 0;
+                for (auto* mo : model->model.objects) {
+                    __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "object: %s, layer_config_ranges.size=%zu", mo->name.c_str(), mo->layer_config_ranges.size());
+                    for (auto* v : mo->volumes) {
+                        const auto& us = v->mmu_segmentation_facets.get_data().used_states;
+                        int volMax = 0;
+                        for (int i = (int) us.size() - 1; i >= 1; --i) { if (us[i]) { if (i > volMax) volMax = i; break; } }
+                        __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "volume: %s, maxPainted=%d", v->name.c_str(), volMax);
+                        if (volMax > maxPaintedState) maxPaintedState = volMax;
+                    }
+                }
+                if (maxPaintedState > numFilaments) numFilaments = maxPaintedState;
+
+                config.set_num_filaments((unsigned int) numFilaments);
+
+                // Resize ONLY per-filament vectors. We EXCLUDE printer-extruder vectors like 
+                // nozzle_diameter to avoid SIGSEGV in DynamicPrintConfig::update_values_to_printer_extruders.
+                // In SEMM mode, the engine knows to use nozzle_diameter[0] for all filaments.
+                auto cloneToN = [&](ConfigOption* opt) {
+                    if (auto* o = dynamic_cast<ConfigOptionFloats*>(opt))                { if (!o->values.empty()) o->values.resize(numFilaments, o->values[0]); }
+                    else if (auto* o = dynamic_cast<ConfigOptionInts*>(opt))             { if (!o->values.empty()) o->values.resize(numFilaments, o->values[0]); }
+                    else if (auto* o = dynamic_cast<ConfigOptionStrings*>(opt))          { if (!o->values.empty()) o->values.resize(numFilaments, o->values[0]); }
+                    else if (auto* o = dynamic_cast<ConfigOptionBools*>(opt))            { if (!o->values.empty()) o->values.resize(numFilaments, o->values[0]); }
+                    else if (auto* o = dynamic_cast<ConfigOptionPercents*>(opt))         { if (!o->values.empty()) o->values.resize(numFilaments, o->values[0]); }
+                    else if (auto* o = dynamic_cast<ConfigOptionFloatsOrPercents*>(opt)) { if (!o->values.empty()) o->values.resize(numFilaments, o->values[0]); }
+                };
+
+                // Filament options that don't start with "filament_" prefix.
+                static const std::set<std::string> extraFilamentOpts = {
+                    "nozzle_temperature", "nozzle_temperature_initial_layer",
+                    "nozzle_temperature_range_low", "nozzle_temperature_range_high",
+                    "cool_plate_temp", "cool_plate_temp_initial_layer",
+                    "eng_plate_temp", "eng_plate_temp_initial_layer",
+                    "hot_plate_temp", "hot_plate_temp_initial_layer",
+                    "textured_plate_temp", "textured_plate_temp_initial_layer",
+                    "chamber_temperature", "chamber_minimal_temperature",
+                    "full_fan_speed_layer", "bridge_fan_speed", "max_fan_speed", "min_fan_speed",
+                    "slow_down_layer_time", "fan_below_layer_time"
+                };
+
+                for (const std::string& key : config.keys()) {
+                    bool isFilament = key.rfind("filament_", 0) == 0 || extraFilamentOpts.count(key) > 0;
+                    if (isFilament) {
+                        // Skip identity/palette fields during cloning (set explicitly below).
+                        if (key == "filament_settings_id" || key == "filament_self_index" || key == "filament_colour" || 
+                            key == "filament_multi_colour" || key == "filament_map") continue;
+                        ConfigOption* opt = config.option(key, false);
+                        if (opt && opt->is_vector()) cloneToN(opt);
+                    }
+                }
+
+                // Override the colors with the user's palette (padded to N by repeating the last color).
+                if (colorsArr != nullptr) {
+                    jsize n = env->GetArrayLength(colorsArr);
+                    jint* c = env->GetIntArrayElements(colorsArr, JNI_FALSE);
+                    std::vector<std::string> colorStrs;
+                    std::vector<std::string> colorTypes;
+                    for (int i = 0; i < numFilaments; ++i) {
+                        int src = (i < n) ? i : (n > 0 ? n - 1 : 0);
+                        char buf[8];
+                        snprintf(buf, sizeof(buf), "#%06X", (n > 0 ? c[src] : 0xFFFFFF) & 0xFFFFFF);
+                        colorStrs.emplace_back(buf);
+                        colorTypes.emplace_back("1"); // default color type
+                    }
+                    env->ReleaseIntArrayElements(colorsArr, c, JNI_ABORT);
+                    if (!colorStrs.empty()) {
+                        config.set_key_value("filament_colour", new ConfigOptionStrings(colorStrs));
+                        config.set_key_value("filament_multi_colour", new ConfigOptionStrings(colorStrs));
+                        config.set_key_value("filament_colour_type", new ConfigOptionStrings(colorTypes));
+                    }
+                }
+
+                // filament_self_index must be 1..N. If all filaments have the same index (e.g. 1),
+                // the engine merges them and emits no tool changes.
+                {
+                    std::vector<int> selfIdx(numFilaments);
+                    for (int i = 0; i < numFilaments; ++i) selfIdx[i] = i + 1;
+                    config.set_key_value("filament_self_index", new ConfigOptionInts(selfIdx));
+                }
+
+                // filament_settings_id should also be unique to prevent merging.
+                {
+                    std::vector<std::string> ids;
+                    for (int i = 0; i < numFilaments; ++i) {
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "Filament %d", i + 1);
+                        ids.emplace_back(buf);
+                    }
+                    config.set_key_value("filament_settings_id", new ConfigOptionStrings(ids));
+                }
+
+                // filament_map must map all virtual filaments back to the physical extruder (1).
+                // Without this, update_values_to_printer_extruders crashes if it tries to index 
+                // beyond the physical extruder count.
+                {
+                    std::vector<int> filamentMap(numFilaments, 1);
+                    config.set_key_value("filament_map", new ConfigOptionInts(filamentMap));
+                }
+
+                const ConfigOption* nd = config.option("nozzle_diameter");
+                if (nd && static_cast<const ConfigOptionFloats*>(nd)->values.size() <= 1) {
+                    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(true));
+                    config.set_key_value("single_extruder_multi_material_priming", new ConfigOptionBool(true));
+                }
+
+                // Enable a prime/wipe tower for reliable filament changes.
+                config.set_key_value("enable_prime_tower", new ConfigOptionBool(true));
+
+                int fdSize = 0;
+                if (auto* fd = dynamic_cast<const ConfigOptionFloats*>(config.option("filament_diameter", false))) fdSize = (int) fd->values.size();
+                __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "multicolor slice: numFilaments=%d maxPainted=%d filament_diameter.size=%d", (int) numFilaments, maxPaintedState, fdSize);
+            }
+
             for (auto* mo : model->model.objects) {
                 print.auto_assign_extruders(mo);
             }
 
-            std::string err = config.validate();
-            if (!err.empty()) {
+            // OrcaSlicer incorrectly suppresses standard tool changes (T0, T1, etc.) if it thinks
+            // the printer is a Bambu Lab machine (is_BBL_printer == true). We force it to false
+            // to ensure standard G-code emission for regular Klipper/Marlin printers.
+            print.is_BBL_printer() = false;
+
+            __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "step: assigned extruders, validating config");
+
+            // OrcaSlicer's config.validate() returns a map of option-key -> error message
+            // instead of a single string; flatten it into one message for the Java side.
+            std::map<std::string, std::string> config_errors = config.validate();
+            if (!config_errors.empty()) {
+                std::string err;
+                for (const auto& kv : config_errors) {
+                    if (!err.empty()) err += "\n";
+                    err += kv.second;
+                }
                 env->ThrowNew(env->FindClass("ru/ytkab0bp/slicebeam/slic3r/Slic3rRuntimeError"), err.c_str());
                 return 0;
             }
+            __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "step: config valid, applying");
             print.apply(model->model, config);
 
-            err = print.validate();
+            // OrcaSlicer calibration: when a calib mode is requested, set the params on the print so
+            // the engine generates the calibration test (e.g. PA line pattern) instead of a normal print.
+            if (calibMode != 0) {
+                Slic3r::Calib_Params cp;
+                cp.mode = static_cast<Slic3r::CalibMode>(calibMode);
+                cp.start = calibStart;
+                cp.end = calibEnd;
+                cp.step = calibStep;
+                cp.print_numbers = true;
+                print.set_calib_params(cp);
+            }
+
+            __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "step: applied, print.validate");
+
+            // Print::validate() now returns a StringObjectException whose message is in .string.
+            std::string err = print.validate().string;
             if (!err.empty()) {
                 env->ThrowNew(env->FindClass("ru/ytkab0bp/slicebeam/slic3r/Slic3rRuntimeError"), err.c_str());
                 return 0;
@@ -884,17 +1099,21 @@ extern "C" {
                     staticVM->DetachCurrentThread();
                 }
             });
+            __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "step: print.process");
             print.process();
+            __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "step: processed, export_gcode");
 
             chars = env->GetStringUTFChars(path, JNI_FALSE);
             GCodeResultRef* resultRef = new GCodeResultRef();
             print.export_gcode(std::string(chars), &resultRef->result, nullptr);
+            __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "step: exported gcode");
             env->ReleaseStringUTFChars(path, chars);
 
             resultRef->name = print.output_filename(model->base_name);
 
             return (jlong) (intptr_t) resultRef;
         } catch (const std::exception& e) {
+            __android_log_print(ANDROID_LOG_ERROR, "BeamPaint", "slice exception type=%s what=%s", typeid(e).name(), e.what());
             env->ThrowNew(env->FindClass("ru/ytkab0bp/slicebeam/slic3r/Slic3rRuntimeError"), e.what());
             return 0;
         }
@@ -932,8 +1151,10 @@ extern "C" {
             const char* nameChars = env->GetStringUTFChars(name, JNI_FALSE);
             ref->name = std::string(nameChars);
 
-            processor.process_file(chars, [](float value) {
-                // TODO: Notify progress value
+            // process_file()'s second argument is now a cancel callback (std::function<void()>),
+            // not a float progress callback.
+            processor.process_file(chars, []() {
+                // TODO: Support cancellation
             });
             ref->result = std::move(processor.extract_result());
 
@@ -952,54 +1173,56 @@ extern "C" {
         return env->NewStringUTF(ref->name.c_str());
     }
 
-    GCodeExtrusionRole mapGCodeRole(int index) {
-        GCodeExtrusionRole gRole;
+    // Maps a Java-side role index (matching libvgcode::EGCodeExtrusionRole ordering) to the
+    // engine's Slic3r::ExtrusionRole, which is the key type of used_filaments_per_role.
+    ExtrusionRole mapGCodeRole(int index) {
+        ExtrusionRole gRole;
         switch (index) {
             default:
             case 0:
-                gRole = GCodeExtrusionRole::None;
+                gRole = erNone;
                 break;
             case 1:
-                gRole = GCodeExtrusionRole::Perimeter;
+                gRole = erPerimeter;
                 break;
             case 2:
-                gRole = GCodeExtrusionRole::ExternalPerimeter;
+                gRole = erExternalPerimeter;
                 break;
             case 3:
-                gRole = GCodeExtrusionRole::OverhangPerimeter;
+                gRole = erOverhangPerimeter;
                 break;
             case 4:
-                gRole = GCodeExtrusionRole::InternalInfill;
+                gRole = erInternalInfill;
                 break;
             case 5:
-                gRole = GCodeExtrusionRole::SolidInfill;
+                gRole = erSolidInfill;
                 break;
             case 6:
-                gRole = GCodeExtrusionRole::TopSolidInfill;
+                gRole = erTopSolidInfill;
                 break;
             case 7:
-                gRole = GCodeExtrusionRole::Ironing;
+                gRole = erIroning;
                 break;
             case 8:
-                gRole = GCodeExtrusionRole::BridgeInfill;
+                gRole = erBridgeInfill;
                 break;
             case 9:
-                gRole = GCodeExtrusionRole::GapFill;
+                gRole = erGapFill;
                 break;
             case 10:
-                gRole = GCodeExtrusionRole::Skirt;
+                gRole = erSkirt;
                 break;
             case 11:
-                gRole = GCodeExtrusionRole::SupportMaterial;
+                gRole = erSupportMaterial;
                 break;
             case 12:
-                gRole = GCodeExtrusionRole::SupportMaterialInterface;
+                gRole = erSupportMaterialInterface;
                 break;
             case 13:
-                gRole = GCodeExtrusionRole::WipeTower;
+                gRole = erWipeTower;
                 break;
             case 14:
-                gRole = GCodeExtrusionRole::Custom;
+                gRole = erCustom;
                 break;
         }
         return gRole;
@@ -1294,7 +1517,9 @@ extern "C" {
     JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_utils_1config_1create(JNIEnv* env, jclass, jstring config) {
         ConfigRef* ref = new ConfigRef();
         const char* config_ini = env->GetStringUTFChars(config, JNI_FALSE);
-        ref->config.load_from_ini_string(config_ini, ForwardCompatibilitySubstitutionRule::Disable);
+        // Tolerate version drift in bundled profiles: substitute unknown enum values rather than
+        // throwing, so the config/UI layer keeps working instead of failing to construct.
+        ref->config.load_from_ini_string(config_ini, ForwardCompatibilitySubstitutionRule::EnableSilent);
 
         const ConfigOption *opt = ref->config.option("nozzle_diameter");
         if (opt)
@@ -1348,7 +1573,7 @@ extern "C" {
 
         Matrix4d modelview(viewMatrix);
         Matrix4d projection(projectionMatrix);
-        Vec4i viewport(0, 0, screen_width, screen_height);
+        Vec4i32 viewport(0, 0, screen_width, screen_height);
         Vec3d screenPoint(screen_x, screen_height - screen_y, 0);
 
         Vec3d point;
@@ -1384,27 +1609,40 @@ extern "C" {
         BedRef* ref = (BedRef*) (intptr_t) ptr;
 
         const char* chars = env->GetStringUTFChars(config_path, JNI_FALSE);
-        ref->config.load(std::string(chars), ForwardCompatibilitySubstitutionRule::Disable);
+        std::string config_path_str(chars);
         env->ReleaseStringUTFChars(config_path, chars);
 
-        const Pointfs bed_shape = ref->config.option_throw<ConfigOptionPoints>("bed_shape")->values;
-        float maxHeight = ref->config.option_throw<ConfigOptionFloat>("max_print_height")->value;
+        // Convert any C++ exception (e.g. a missing/invalid config option) into a Java exception
+        // instead of letting it escape the JNI boundary and abort the whole process.
+        try {
+            // The bed only needs printable_area / printable_height. Use silent substitution so a single
+            // unrecognised enum value elsewhere in the profile (engine/profile version drift) falls back
+            // to its default instead of throwing and leaving the bed blank.
+            ref->config.load(config_path_str, ForwardCompatibilitySubstitutionRule::EnableSilent);
 
-        ref->contour = ExPolygon(Polygon::new_scale(bed_shape));
-        const BoundingBox bbox = ref->contour.contour.bounding_box();
-        if (!bbox.defined) {
-            env->ThrowNew(env->FindClass("ru/ytkab0bp/slicebeam/slic3r/Slic3rRuntimeError"), "Invalid bed shape");
-            return;
+            // OrcaSlicer renamed bed_shape -> printable_area and max_print_height -> printable_height.
+            const Pointfs bed_shape = ref->config.option_throw<ConfigOptionPoints>("printable_area")->values;
+            float maxHeight = ref->config.option_throw<ConfigOptionFloat>("printable_height")->value;
+
+            ref->contour = ExPolygon(Polygon::new_scale(bed_shape));
+            const BoundingBox bbox = ref->contour.contour.bounding_box();
+            if (!bbox.defined) {
+                env->ThrowNew(env->FindClass("ru/ytkab0bp/slicebeam/slic3r/Slic3rRuntimeError"), "Invalid bed shape");
+                return;
+            }
+
+            // BuildVolume now also takes per-extruder printable areas/heights; we have none, so pass empty.
+            ref->build_volume = BuildVolume { bed_shape, maxHeight, {}, {} };
+            ref->triangles->reset();
+            ref->gridlines->reset();
+            ref->contourlines->reset();
+
+            bed_util_init_gridlines(ref->contour, ref->gridlines);
+            bed_util_init_triangles(ref->contour, ref->triangles);
+            bed_util_init_contourlines(ref->contour, ref->contourlines);
+        } catch (const std::exception& e) {
+            env->ThrowNew(env->FindClass("ru/ytkab0bp/slicebeam/slic3r/Slic3rRuntimeError"), e.what());
         }
-
-        ref->build_volume = BuildVolume { bed_shape, maxHeight };
-        ref->triangles->reset();
-        ref->gridlines->reset();
-        ref->contourlines->reset();
-
-        bed_util_init_gridlines(ref->contour, ref->gridlines);
-        bed_util_init_triangles(ref->contour, ref->triangles);
-        bed_util_init_contourlines(ref->contour, ref->contourlines);
     }
 
     JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_bed_1init_1triangles_1mesh(JNIEnv* env, jclass, jlong ptr, jlong triangles_ptr) {
@@ -1424,10 +1662,32 @@ extern "C" {
         BedRef* ref = (BedRef*) (intptr_t) ptr;
         ModelRef* mRef = (ModelRef*) (intptr_t) model;
 
-        DynamicPrintConfig config = ref->config;
-        arr2::ArrangeBed bed = arr2::to_arrange_bed(get_bed_shape(config));
-        arr2::ArrangeSettings arrange_cfg;
-        return arrange_objects(mRef->model, bed, arrange_cfg);
+        try {
+            // OrcaSlicer's arrange API takes the bed as Points (scaled bed shape) plus ArrangeParams,
+            // rather than the arr2::ArrangeBed/ArrangeSettings types of newer PrusaSlicer.
+            DynamicPrintConfig config = ref->config;
+            Points bed = get_bed_shape(config);
+            ArrangeParams arrange_cfg;
+            arrange_cfg.min_obj_distance = scaled(6.0);
+
+            // arrange_objects() / arrange() do NOT translate min_obj_distance into the per-item inflation
+            // that the packer uses for spacing — _arrange() zeroes min_obj_distance and expects every item
+            // to be pre-inflated (the desktop does this via update_selected_items_inflation()). Without it,
+            // parts pack edge-to-edge. Inflate each real object by half the min distance so neighbouring
+            // parts end up a full min_obj_distance (6mm) apart, which keeps them separable/printable.
+            ModelInstancePtrs instances;
+            ArrangePolygons input = get_arrange_polys(mRef->model, instances);
+            const coord_t inflation = arrange_cfg.min_obj_distance / 2;
+            for (ArrangePolygon& ap : input)
+                if (!ap.is_virt_object)
+                    ap.inflation = inflation;
+            arrangement::arrange(input, bed, arrange_cfg);
+            return apply_arrange_polys(input, instances, throw_if_out_of_bed);
+        } catch (const std::exception& e) {
+            // If the model cannot fit the bed, it throws "Objects could not fit on the bed".
+            // Catch it here to avoid JNI crash.
+            return false;
+        }
     }
 
     JNIEXPORT jdoubleArray JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_bed_1get_1bounding_1volume(JNIEnv* env, jclass, jlong ptr) {
@@ -1526,6 +1786,21 @@ extern "C" {
         ref->viewer.set_layers_view_range(static_cast<uint32_t>(min), static_cast<uint32_t>(max));
     }
 
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1set_1infill_1visibility_1depth(JNIEnv* env, jclass, jlong ptr, jint depth) {
+        GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
+        ref->viewer.set_infill_visibility_depth(depth);
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1set_1fast_1mode(JNIEnv* env, jclass, jlong ptr, jboolean fastMode) {
+        GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
+        ref->viewer.set_fast_mode(fastMode);
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1set_1selected_1object_1id(JNIEnv* env, jclass, jlong ptr, jint id) {
+        GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
+        ref->viewer.set_selected_object_id(id);
+    }
+
     JNIEXPORT jlongArray JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1get_1layers_1view_1range(JNIEnv* env, jclass, jlong ptr) {
         GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
         jlongArray arr = env->NewLongArray(2);
@@ -1613,5 +1888,241 @@ extern "C" {
     JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1toggle_1extrusion_1role_1visibility(JNIEnv* env, jclass, jlong ptr, jint role) {
         GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
         ref->viewer.toggle_extrusion_role_visibility(mapRole(role));
+    }
+
+    // Switch the gcode preview color mode (e.g. FeatureType=0, Tool/Filament=11). See libvgcode EViewType.
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1set_1view_1type(JNIEnv* env, jclass, jlong ptr, jint type) {
+        GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
+        ref->viewer.set_view_type(static_cast<libvgcode::EViewType>(type));
+    }
+
+    JNIEXPORT jint JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1get_1view_1type(JNIEnv* env, jclass, jlong ptr) {
+        GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
+        return (jint) ref->viewer.get_view_type();
+    }
+
+    // Set the per-filament/tool colors used by the Tool view. colors are packed 0xRRGGBB ints.
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1set_1tool_1colors(JNIEnv* env, jclass, jlong ptr, jintArray colorsArr) {
+        GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
+        jsize n = env->GetArrayLength(colorsArr);
+        jint* c = env->GetIntArrayElements(colorsArr, JNI_FALSE);
+        libvgcode::Palette palette;
+        palette.reserve(n);
+        for (jsize i = 0; i < n; ++i) {
+            int v = c[i];
+            palette.push_back({ (unsigned char) ((v >> 16) & 0xFF), (unsigned char) ((v >> 8) & 0xFF), (unsigned char) (v & 0xFF) });
+        }
+        env->ReleaseIntArrayElements(colorsArr, c, JNI_ABORT);
+        if (!palette.empty())
+            ref->viewer.set_tool_colors(palette);
+    }
+
+    // ---- Multi-color painting (mmu segmentation) ----
+
+    static Slic3r::EnforcerBlockerType paint_state(jint filamentIdx) {
+        if (filamentIdx <= 0) return Slic3r::EnforcerBlockerType::NONE;
+        int v = filamentIdx;
+        if (v > (int) Slic3r::EnforcerBlockerType::ExtruderMax) v = (int) Slic3r::EnforcerBlockerType::ExtruderMax;
+        return static_cast<Slic3r::EnforcerBlockerType>(v);
+    }
+
+    JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1begin(JNIEnv* env, jclass, jlong modelPtr, jint objIdx) {
+        ModelRef* mRef = (ModelRef*) (intptr_t) modelPtr;
+        if (objIdx < 0 || objIdx >= (int) mRef->model.objects.size()) return 0;
+        ModelObject* obj = mRef->model.objects[objIdx];
+        if (obj->volumes.empty()) return 0;
+        PaintSessionRef* s = new PaintSessionRef();
+        s->model = mRef;
+        s->objIdx = objIdx;
+        // Use the same merged object mesh the GLModel/raycaster uses, so hit coords and triangle
+        // indices line up exactly. Paint states are stored per triangle index, so they still map
+        // back to volume[0]'s mmu_segmentation_facets (single-volume objects).
+        s->mesh = obj->mesh();
+        s->selector = std::make_unique<Slic3r::TriangleSelector>(s->mesh);
+        const auto& data = obj->volumes[0]->mmu_segmentation_facets.get_data();
+        if (!data.triangles_to_split.empty())
+            s->selector->deserialize(data, true);
+        s->emesh = new AABBMesh(s->mesh, true);
+        return (jlong) (intptr_t) s;
+    }
+
+    JNIEXPORT jdoubleArray JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1raycast(JNIEnv* env, jclass, jlong sessionPtr, jdoubleArray originArr, jdoubleArray dirArr) {
+        PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
+        jdouble* o = env->GetDoubleArrayElements(originArr, JNI_FALSE);
+        jdouble* d = env->GetDoubleArrayElements(dirArr, JNI_FALSE);
+        Vec3d origin(o[0], o[1], o[2]);
+        Vec3d dir(d[0], d[1], d[2]);
+        env->ReleaseDoubleArrayElements(originArr, o, JNI_ABORT);
+        env->ReleaseDoubleArrayElements(dirArr, d, JNI_ABORT);
+        std::vector<AABBMesh::hit_result> hits = s->emesh->query_ray_hits(origin, dir);
+        if (hits.empty()) return env->NewDoubleArray(0);
+        const AABBMesh::hit_result& hit = hits.front();
+        jdoubleArray arr = env->NewDoubleArray(4);
+        Vec3d pos = hit.position();
+        double out[4] = { (double) hit.face(), pos.x(), pos.y(), pos.z() };
+        env->SetDoubleArrayRegion(arr, 0, 4, out);
+        return arr;
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1brush(JNIEnv* env, jclass, jlong sessionPtr, jdoubleArray hitArr, jint facetStart, jdouble radius, jint filamentIdx, jdoubleArray cameraArr) {
+        PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
+        jdouble* h = env->GetDoubleArrayElements(hitArr, JNI_FALSE);
+        Vec3f hit((float) h[0], (float) h[1], (float) h[2]);
+        env->ReleaseDoubleArrayElements(hitArr, h, JNI_ABORT);
+        // cameraArr is currently unused (kept in the signature for a future view-aware brush).
+        // Paint whole original triangles (set_facet) — this produces clean per-region segmentation
+        // that reliably yields tool changes. To fix wall coverage (large triangles whose center is
+        // far from the brush), paint a triangle if its center OR any vertex is within the radius.
+        Slic3r::EnforcerBlockerType state = paint_state(filamentIdx);
+        const auto& its = s->mesh.its;
+        float r2 = (float) (radius * radius);
+        for (int i = 0; i < (int) its.indices.size(); ++i) {
+            const Vec3i32& tri = its.indices[i];
+            const Vec3f& a = its.vertices[tri[0]];
+            const Vec3f& b = its.vertices[tri[1]];
+            const Vec3f& c = its.vertices[tri[2]];
+            Vec3f centroid = (a + b + c) / 3.f;
+            if ((centroid - hit).squaredNorm() <= r2 ||
+                (a - hit).squaredNorm() <= r2 ||
+                (b - hit).squaredNorm() <= r2 ||
+                (c - hit).squaredNorm() <= r2) {
+                s->selector->set_facet(i, state);
+            }
+        }
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1bucket(JNIEnv* env, jclass, jlong sessionPtr, jdoubleArray hitArr, jint facetStart, jint filamentIdx, jboolean propagate, jdouble angle) {
+        PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
+        jdouble* h = env->GetDoubleArrayElements(hitArr, JNI_FALSE);
+        Vec3f hit((float) h[0], (float) h[1], (float) h[2]);
+        env->ReleaseDoubleArrayElements(hitArr, h, JNI_ABORT);
+        // Bucket fill needs a valid starting facet; the Java raycaster only gives the hit point,
+        // so find the nearest original facet to it.
+        if (facetStart < 0) {
+            const auto& its = s->mesh.its;
+            float best = FLT_MAX; int bi = 0;
+            for (int i = 0; i < (int) its.indices.size(); ++i) {
+                const Vec3i32& t = its.indices[i];
+                Vec3f c = (its.vertices[t[0]] + its.vertices[t[1]] + its.vertices[t[2]]) / 3.f;
+                float d = (c - hit).squaredNorm();
+                if (d < best) { best = d; bi = i; }
+            }
+            facetStart = bi;
+        }
+        Slic3r::TriangleSelector::ClippingPlane clp;
+        s->selector->bucket_fill_select_triangles(hit, facetStart, clp, (float) angle, propagate, true);
+        s->selector->seed_fill_apply_on_triangles(paint_state(filamentIdx));
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1height(JNIEnv* env, jclass, jlong sessionPtr, jdouble zMin, jdouble zMax, jint filamentIdx) {
+        PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
+        Slic3r::EnforcerBlockerType state = paint_state(filamentIdx);
+        const auto& its = s->mesh.its;
+        for (int i = 0; i < (int) its.indices.size(); ++i) {
+            const Vec3i32& tri = its.indices[i];
+            const Vec3f& a = its.vertices[tri[0]];
+            const Vec3f& b = its.vertices[tri[1]];
+            const Vec3f& c = its.vertices[tri[2]];
+            float cz = (a.z() + b.z() + c.z()) / 3.f;
+            // Paint if centroid OR any vertex is within range. This is critical for large
+            // hull triangles that cross range boundaries.
+            if ((cz >= zMin && cz <= zMax) ||
+                (a.z() >= zMin && a.z() <= zMax) ||
+                (b.z() >= zMin && b.z() <= zMax) ||
+                (c.z() >= zMin && c.z() <= zMax)) {
+                s->selector->set_facet(i, state);
+            }
+        }
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1clear(JNIEnv* env, jclass, jlong sessionPtr) {
+        PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
+        s->selector->reset();
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1commit(JNIEnv* env, jclass, jlong sessionPtr) {
+        PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
+        ModelObject* obj = s->model->model.objects[s->objIdx];
+        
+        // Multi-volume objects: the merged session mesh matches obj->mesh(). We need to 
+        // split its facet states back to the individual volumes.
+        int triOffset = 0;
+        for (auto* v : obj->volumes) {
+            int numTris = (int) v->mesh().its.indices.size();
+            // For now, commit to volumes[0] as it's the standard for single-part models like Benchy.
+            // We set its extruder to 0 (Auto) if it has ANY painting.
+            if (v == obj->volumes[0]) {
+                v->mmu_segmentation_facets.set(*s->selector);
+            }
+            
+            if (!v->mmu_segmentation_facets.get_data().triangles_to_split.empty()) {
+                v->config.set("extruder", 0);
+                __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "committed paint to volume: %s, set extruder=0 (Auto)", v->name.c_str());
+            }
+        }
+    }
+
+    // Returns flattened triangle vertices (9 floats per triangle) for the facets painted with the
+    // given filament, for rendering a colored overlay.
+    JNIEXPORT jfloatArray JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1get_1mesh(JNIEnv* env, jclass, jlong sessionPtr, jint filamentIdx) {
+        PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
+        indexed_triangle_set its = s->selector->get_facets(paint_state(filamentIdx));
+        std::vector<float> buf;
+        buf.reserve(its.indices.size() * 9);
+        for (const Vec3i32& tri : its.indices) {
+            for (int k = 0; k < 3; ++k) {
+                const Vec3f& v = its.vertices[tri[k]];
+                buf.push_back(v.x()); buf.push_back(v.y()); buf.push_back(v.z());
+            }
+        }
+        jfloatArray arr = env->NewFloatArray((jsize) buf.size());
+        if (!buf.empty()) env->SetFloatArrayRegion(arr, 0, (jsize) buf.size(), buf.data());
+        return arr;
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1end(JNIEnv* env, jclass, jlong sessionPtr) {
+        PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
+        delete s->emesh;
+        delete s;
+    }
+
+    // Build a GLModel from the committed mmu painting on an object's volume[0] (no active session),
+    // so painted colors persist on the model after exiting paint mode. Returns the triangle count.
+    JNIEXPORT jint JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1build_1paint_1overlay(JNIEnv* env, jclass, jlong modelPtr, jint objIdx, jlong glPtr, jint filamentIdx) {
+        ModelRef* m = (ModelRef*) (intptr_t) modelPtr;
+        if (objIdx < 0 || objIdx >= (int) m->model.objects.size()) return 0;
+        ModelObject* obj = m->model.objects[objIdx];
+        if (obj->volumes.empty()) return 0;
+        const auto& data = obj->volumes[0]->mmu_segmentation_facets.get_data();
+        if (data.triangles_to_split.empty()) return 0;
+        TriangleMesh mesh = obj->mesh();
+        Slic3r::TriangleSelector sel(mesh);
+        sel.deserialize(data, true);
+        indexed_triangle_set its = sel.get_facets(paint_state(filamentIdx));
+        GLModelRef* g = (GLModelRef*) (intptr_t) glPtr;
+        g->model.reset();
+        if (!its.indices.empty())
+            g->model.init_from(its);
+        return (jint) its.indices.size();
+    }
+
+    JNIEXPORT jboolean JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1has_1paint(JNIEnv* env, jclass, jlong modelPtr, jint objIdx) {
+        ModelRef* m = (ModelRef*) (intptr_t) modelPtr;
+        if (objIdx < 0 || objIdx >= (int) m->model.objects.size()) return false;
+        ModelObject* obj = m->model.objects[objIdx];
+        if (obj->volumes.empty()) return false;
+        return !obj->volumes[0]->mmu_segmentation_facets.get_data().triangles_to_split.empty();
+    }
+
+    // Build a GLModel from the facets painted with the given filament (mesh-local coords), for
+    // rendering a colored overlay over the base object. Returns the number of triangles.
+    JNIEXPORT jint JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_glmodel_1init_1from_1paint(JNIEnv* env, jclass, jlong glPtr, jlong sessionPtr, jint filamentIdx) {
+        GLModelRef* g = (GLModelRef*) (intptr_t) glPtr;
+        PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
+        indexed_triangle_set its = s->selector->get_facets(paint_state(filamentIdx));
+        g->model.reset();
+        if (!its.indices.empty())
+            g->model.init_from(its);
+        return (jint) its.indices.size();
     }
 }

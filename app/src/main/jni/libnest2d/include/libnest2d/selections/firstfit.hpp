@@ -63,7 +63,7 @@ public:
             placers.back().preload(ig);
         }
         
-        auto sortfunc = [](Item& i1, Item& i2) {
+        auto sortfunc = [&pconfig](Item& i1, Item& i2) {
             int p1 = i1.priority(), p2 = i2.priority();
             return p1 == p2 ? i1.area() > i2.area() : p1 > p2;
         };

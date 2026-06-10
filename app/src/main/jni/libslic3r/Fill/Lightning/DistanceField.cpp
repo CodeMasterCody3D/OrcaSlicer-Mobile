@@ -17,7 +17,7 @@ namespace Slic3r::FillLightning
 constexpr coord_t radius_per_cell_size = 6;  // The cell-size should be small compared to the radius, but not so small as to be inefficient.
 
 #ifdef LIGHTNING_DISTANCE_FIELD_DEBUG_OUTPUT
-void export_distance_field_to_svg(const std::string &path, const Polygons &outline, const Polygons &overhang, const std::vector<DistanceField::UnsupportedCell> &unsupported_points, const Points &points = {})
+void export_distance_field_to_svg(const std::string &path, const Polygons &outline, const Polygons &overhang, const std::list<DistanceField::UnsupportedCell> &unsupported_points, const Points &points = {})
 {
     coordf_t    stroke_width = scaled<coordf_t>(0.01);
     BoundingBox bbox         = get_extents(outline);
@@ -43,7 +43,8 @@ DistanceField::DistanceField(const coord_t& radius, const Polygons& current_outl
     m_supporting_radius2 = Slic3r::sqr(int64_t(radius));
     // Sample source polygons with a regular grid sampling pattern.
     const BoundingBox overhang_bbox = get_extents(current_overhang);
-    for (const ExPolygon &expoly : union_ex(current_overhang)) {
+    ExPolygons expolys = offset2_ex(union_ex(current_overhang), -m_cell_size / 2, m_cell_size / 2); // remove dangling lines which causes sample_grid_pattern crash (fails the OUTER_LOW assertions)
+    for (const ExPolygon &expoly : expolys) {
         const Points sampled_points               = sample_grid_pattern(expoly, m_cell_size, overhang_bbox);
         const size_t unsupported_points_prev_size = m_unsupported_points.size();
         m_unsupported_points.resize(unsupported_points_prev_size + sampled_points.size());

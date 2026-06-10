@@ -79,6 +79,10 @@ struct PathVertex
     //
     uint8_t color_id{ 0 };
     //
+    // Segment object label id
+    //
+    int object_label_id{ -1 };
+    //
     // Segment estimated times
     //
     std::array<float, TIME_MODES_COUNT> times{ 0.0f, 0.0f };

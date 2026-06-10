@@ -177,6 +177,8 @@ public:
     using Tag = BoxTag;
     using PointType = P;
 
+    bool defined = true;
+
     inline _Box(const P& center = {TCoord<P>(0), TCoord<P>(0)}):
         _Box(TCoord<P>(0), TCoord<P>(0), center) {}
     
@@ -204,6 +206,8 @@ public:
         Unit s = width() < Zero || height() < Zero ? Unit(-1) : Unit(1);
         return s * libnest2d::abs(Unit(width()) * height());
     }
+
+    inline _Box intersection(const _Box& rhs) const BP2D_NOEXCEPT;
     
     static inline _Box infinite(const P &center = {TCoord<P>(0), TCoord<P>(0)});
 };
@@ -436,6 +440,19 @@ template<class P>
 void setY(P& p, const TCoord<P>& val)
 {
     pointlike::y<P>(p) = val;
+}
+
+template<class P>
+inline _Box<P> _Box<P>::intersection(const _Box& rhs) const BP2D_NOEXCEPT {
+    P lo{std::max(getX(minCorner()), getX(rhs.minCorner())),
+         std::max(getY(minCorner()), getY(rhs.minCorner()))};
+    P hi{std::min(getX(maxCorner()), getX(rhs.maxCorner())),
+         std::min(getY(maxCorner()), getY(rhs.maxCorner()))};
+    if (getX(hi) < getX(lo)) setX(hi, getX(lo));
+    if (getY(hi) < getY(lo)) setY(hi, getY(lo));
+    _Box ret{lo, hi};
+    ret.defined = defined && rhs.defined;
+    return ret;
 }
 
 template<class P>

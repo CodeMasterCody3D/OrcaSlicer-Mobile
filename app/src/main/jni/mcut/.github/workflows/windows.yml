@@ -1,0 +1,43 @@
+name: windows
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ${{matrix.os}}
+    strategy:
+      matrix:
+        # windows-2016 and windows-2019 have MSVC 2017 and 2019 installed
+        # respectively: https://github.com/actions/virtual-environments.
+        os: [windows-latest]
+        platform: [x64] # Win32
+        build_type: [Debug, Release]
+        standard: [11] # [11, 17, 20]
+        multithreading: [ON,OFF]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Create Build Environment
+      run: cmake -E make_directory ${{runner.workspace}}/build
+
+    - name: Configure
+      # Use a bash shell for $GITHUB_WORKSPACE.
+      shell: bash
+      working-directory: ${{runner.workspace}}/build
+      run: |
+        cmake -DCMAKE_BUILD_TYPE=${{matrix.build_type}} ${{matrix.shared}} \
+              -A ${{matrix.platform}} \
+              -DMCUT_BUILD_WITH_COMPUTE_HELPER_THREADPOOL=${{matrix.multithreading}} \
+              -DCMAKE_CXX_STANDARD=${{matrix.standard}} \
+              $GITHUB_WORKSPACE
+
+    - name: Build
+      working-directory: ${{runner.workspace}}/build
+      run: |
+        $threads = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+        cmake --build . --config ${{matrix.build_type}} --parallel $threads
+
+    - name: Test
+      working-directory: ${{runner.workspace}}/build/bin/${{matrix.build_type}}
+      run: ./mcut_tests

@@ -72,6 +72,36 @@ void Viewer::toggle_top_layer_only_view_range()
     m_impl->toggle_top_layer_only_view_range();
 }
 
+int Viewer::get_infill_visibility_depth() const
+{
+    return m_impl->get_infill_visibility_depth();
+}
+
+void Viewer::set_infill_visibility_depth(int depth)
+{
+    m_impl->set_infill_visibility_depth(depth);
+}
+
+bool Viewer::is_fast_mode() const
+{
+    return m_impl->is_fast_mode();
+}
+
+void Viewer::set_fast_mode(bool fast_mode)
+{
+    m_impl->set_fast_mode(fast_mode);
+}
+
+int Viewer::get_selected_object_id() const
+{
+    return m_impl->get_selected_object_id();
+}
+
+void Viewer::set_selected_object_id(int id)
+{
+    m_impl->set_selected_object_id(id);
+}
+
 bool Viewer::is_option_visible(EOptionType type) const
 {
     return m_impl->is_option_visible(type);

@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2022 - 2023 Pavel Mikuš @Godrak, Vojtěch Bubník @bubnikv
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "JumpPointSearch.hpp"
 #include "BoundingBox.hpp"
 #include "ExPolygon.hpp"
@@ -131,8 +127,8 @@ private:
 public:
     template<class Fn> void foreach_reachable(const Node &from, Fn &&fn) const
     {
-        const CellPositionType       &pos         = from.position;
-        const CellPositionType       &forward_dir = from.incoming_dir;
+        const CellPositionType &      pos         = from.position;
+        const CellPositionType &      forward_dir = from.incoming_dir;
         std::vector<CellPositionType> dirs_to_check{};
 
         if (abs(forward_dir.x()) + abs(forward_dir.y()) == 0) { // special case for starting point
@@ -157,13 +153,9 @@ public:
         } else { // horizontal or vertical
             CellPositionType side_dir = CellPositionType(forward_dir.y(), forward_dir.x());
 
-            if (!is_passable(pos + side_dir) && is_passable(pos + forward_dir + side_dir)) {
-                dirs_to_check.push_back(forward_dir + side_dir);
-            }
+            if (!is_passable(pos + side_dir) && is_passable(pos + forward_dir + side_dir)) { dirs_to_check.push_back(forward_dir + side_dir); }
 
-            if (!is_passable(pos - side_dir) && is_passable(pos + forward_dir - side_dir)) {
-                dirs_to_check.push_back(forward_dir - side_dir);
-            }
+            if (!is_passable(pos - side_dir) && is_passable(pos + forward_dir - side_dir)) { dirs_to_check.push_back(forward_dir - side_dir); }
             dirs_to_check.push_back(forward_dir);
         }
 
@@ -177,10 +169,7 @@ public:
 
     float goal_heuristic(Node n) const { return n.position == target ? -1.f : (target - n.position).template cast<double>().norm(); }
 
-    size_t unique_id(Node n) const
-    {
-        return (static_cast<size_t>(uint16_t(n.position.x())) << 16) + static_cast<size_t>(uint16_t(n.position.y()));
-    }
+    size_t unique_id(Node n) const { return (static_cast<size_t>(uint16_t(n.position.x())) << 16) + static_cast<size_t>(uint16_t(n.position.y())); }
 
     const std::vector<CellPositionType> all_directions{{1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}};
 };
@@ -209,17 +198,6 @@ void JPSPathFinder::add_obstacles(const Lines &obstacles)
         Pixel end   = pixelize(l.b);
         double_dda_with_offset(start.x(), start.y(), end.x(), end.y(), store_obstacle);
     }
-}
-
-void JPSPathFinder::add_obstacles(const Layer *layer, const Point &global_origin)
-{
-    if (layer == nullptr) return;
-
-    this->print_z = layer->print_z;
-    Lines obstacles;
-    obstacles.reserve(layer->curled_lines.size());
-    for (const Line &l : layer->curled_lines) { obstacles.push_back(Line{l.a + global_origin, l.b + global_origin}); }
-    add_obstacles(obstacles);
 }
 
 Polyline JPSPathFinder::find_path(const Point &p0, const Point &p1)
@@ -265,16 +243,14 @@ Polyline JPSPathFinder::find_path(const Point &p0, const Point &p1)
     search_box.max = search_box.max.cwiseMin(bounding_square.max);
     search_box.min = search_box.min.cwiseMax(bounding_square.min);
 
-    auto cell_query = [&](Pixel pixel) {
-        return search_box.contains(pixel) && (pixel == start || pixel == end || inpassable.find(pixel) == inpassable.end());
-    };
+    auto cell_query = [&](Pixel pixel) { return search_box.contains(pixel) && (pixel == start || pixel == end || inpassable.find(pixel) == inpassable.end()); };
 
     JPSTracer<Pixel, decltype(cell_query)> tracer(end, cell_query);
     using QNode = astar::QNode<JPSTracer<Pixel, decltype(cell_query)>>;
 
-    std::unordered_map<size_t, QNode>   astar_cache{};
+    std::unordered_map<size_t, QNode>          astar_cache{};
     std::vector<Pixel, PointsAllocator<Pixel>> out_path;
-    std::vector<decltype(tracer)::Node> out_nodes;
+    std::vector<decltype(tracer)::Node>        out_nodes;
 
     if (!astar::search_route(tracer, {start, {0, 0}}, std::back_inserter(out_nodes), astar_cache)) {
         // path not found - just reconstruct the best path from astar cache.
@@ -319,9 +295,7 @@ Polyline JPSPathFinder::find_path(const Point &p0, const Point &p1)
     {
         tmp_path.push_back(out_path.front()); // first point
         for (size_t i = 1; i < out_path.size() - 1; i++) {
-            if ((out_path[i] - out_path[i - 1]).cast<float>().normalized() != (out_path[i + 1] - out_path[i]).cast<float>().normalized()) {
-                tmp_path.push_back(out_path[i]);
-            }
+            if ((out_path[i] - out_path[i - 1]).cast<float>().normalized() != (out_path[i + 1] - out_path[i]).cast<float>().normalized()) { tmp_path.push_back(out_path[i]); }
         }
         tmp_path.push_back(out_path.back()); // last_point
         out_path = tmp_path;

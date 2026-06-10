@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import ru.ytkab0bp.slicebeam.SliceBeam;
 import ru.ytkab0bp.slicebeam.utils.Vec3d;
 
 public class Model {
@@ -114,6 +115,10 @@ public class Model {
         Native.model_delete_object(pointer, i);
     }
 
+    public boolean cut(int objectIndex, double zHeight, double rotX, double rotY, boolean keepUpper, boolean keepLower) {
+        return Native.model_cut(pointer, objectIndex, zHeight, rotX, rotY, keepUpper, keepLower);
+    }
+
     public void getTranslation(int i, Vec3d vec) {
         double[] tr = Native.model_get_translation(pointer, i);
         vec.set(tr[0], tr[1], tr[2]);
@@ -155,6 +160,16 @@ public class Model {
         Native.model_set_extruder(pointer, i, extruder);
     }
 
+    /** True if object i has any committed multi-color painting. */
+    public boolean hasPaint(int i) {
+        return Native.model_has_paint(pointer, i);
+    }
+
+    /** Fill a GLModel with object i's committed painting for the given filament; returns triangle count. */
+    public int buildPaintOverlay(int i, GLModel gl, int filamentIdx) {
+        return Native.model_build_paint_overlay(pointer, i, gl.pointer, filamentIdx);
+    }
+
     public void autoOrient(int i) {
         Native.model_auto_orient(pointer, i);
     }
@@ -164,10 +179,59 @@ public class Model {
     }
 
     public GCodeProcessorResult slice(String configPath, String gcodePath, SliceListener listener) throws Slic3rRuntimeError {
-        return new GCodeProcessorResult(Native.model_slice(pointer, configPath, gcodePath, listener));
+        return slice(configPath, gcodePath, listener, 0, 0, 0, 0);
+    }
+
+    /** Slice as an OrcaSlicer calibration (calibMode = CalibMode ordinal; 0 = normal print). */
+    public GCodeProcessorResult slice(String configPath, String gcodePath, SliceListener listener, int calibMode, double calibStart, double calibEnd, double calibStep) throws Slic3rRuntimeError {
+        // Restore auto_brim for the native engine if the user selected it (genCurrentConfig converts
+        // it to outer_only for Bed3D compatibility since Bed3D doesn't understand the auto_brim enum).
+        if (SliceBeam.AUTO_BRIM_SELECTED) {
+            try {
+                java.io.File cfgFile = new java.io.File(configPath);
+                String cfgStr = new String(java.nio.file.Files.readAllBytes(cfgFile.toPath()));
+                // Only replace outer_only → auto_brim to avoid mangling other brim_type values.
+                if (cfgStr.contains("brim_type = outer_only")) {
+                    cfgStr = cfgStr.replace("brim_type = outer_only", "brim_type = auto_brim");
+                    java.nio.file.Files.write(cfgFile.toPath(), cfgStr.getBytes());
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        // Multi-color: if any object is painted (or has a non-default base filament), declare the
+        // filament palette so the engine runs MMU segmentation and emits tool changes.
+        int numFilaments = 1;
+        int[] colors = null;
+        int[] pal = ru.ytkab0bp.slicebeam.utils.Prefs.getFilamentPalette();
+        if (pal.length > 1) {
+            boolean anyColor = false;
+            for (int i = 0; i < getObjectsCount(); i++) {
+                if (hasPaint(i) || getExtruder(i) > 1) { anyColor = true; break; }
+            }
+            if (anyColor) {
+                numFilaments = pal.length;
+                colors = new int[pal.length];
+                for (int i = 0; i < pal.length; i++) colors[i] = pal[i] & 0xFFFFFF;
+            }
+        }
+        return new GCodeProcessorResult(Native.model_slice(pointer, configPath, gcodePath, listener, numFilaments, colors, calibMode, calibStart, calibEnd, calibStep));
     }
 
     public void export3mf(String configPath, String _3mfPath) throws Slic3rRuntimeError {
+        // Same auto_brim restoration as slice() — the native engine needs the real value.
+        if (SliceBeam.AUTO_BRIM_SELECTED) {
+            try {
+                java.io.File cfgFile = new java.io.File(configPath);
+                String cfgStr = new String(java.nio.file.Files.readAllBytes(cfgFile.toPath()));
+                if (cfgStr.contains("brim_type = outer_only")) {
+                    cfgStr = cfgStr.replace("brim_type = outer_only", "brim_type = auto_brim");
+                    java.nio.file.Files.write(cfgFile.toPath(), cfgStr.getBytes());
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
         Native.model_export_3mf(pointer, configPath, _3mfPath);
     }
 

@@ -1,13 +1,8 @@
-///|/ Copyright (c) Prusa Research 2022 Pavel Mikuš @Godrak
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "TriangleSetSampling.hpp"
 #include <map>
 #include <random>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
-#include <boost/random/uniform_real_distribution.hpp>
 
 namespace Slic3r {
 
@@ -34,9 +29,8 @@ TriangleSetSamples sample_its_uniform_parallel(size_t samples_count, const index
     }
 
     std::mt19937_64 mersenne_engine { 27644437 };
-    // Use boost instead of std to ensure stability accross platforms!
     // random numbers on interval [0, 1)
-    boost::random::uniform_real_distribution<double> fdistribution;
+    std::uniform_real_distribution<double> fdistribution;
 
     auto get_random = [&fdistribution, &mersenne_engine]() {
         return Vec3d { fdistribution(mersenne_engine), fdistribution(mersenne_engine), fdistribution(mersenne_engine) };

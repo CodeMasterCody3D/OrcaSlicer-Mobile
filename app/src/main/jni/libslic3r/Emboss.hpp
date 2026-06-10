@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2021 - 2022 Filip Sykala @Jony01
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_Emboss_hpp_
 #define slic3r_Emboss_hpp_
 
@@ -282,6 +278,8 @@ namespace Emboss
     class IProjection : public IProject3d
     {
     public:
+        virtual ~IProjection() = default;
+
         /// <summary>
         /// convert 2d point to 3d points
         /// </summary>
@@ -445,9 +443,9 @@ namespace Emboss
     /// Sample slice polygon by bounding boxes centers
     /// slice start point has shape_center_x coor
     /// </summary>
-    /// <param name="slice">Polygon and start point[Slic3r scaled milimeters]</param>
+    /// <param name="slice">Polygon and start point[Slic3r scaled millimeters]</param>
     /// <param name="bbs">Bounding boxes of letter on one line[in font scales]</param>
-    /// <param name="scale">Scale for bbs (after multiply bb is in milimeters)</param>
+    /// <param name="scale">Scale for bbs (after multiply bb is in millimeters)</param>
     /// <returns>Sampled polygon by bounding boxes</returns>
     PolygonPoints sample_slice(const TextLine &slice, const BoundingBoxes &bbs, double scale);
 
@@ -459,11 +457,7 @@ namespace Emboss
     /// <param name="polygon">Polygon know neighbor of point</param>
     /// <returns>angle(atan2) of normal in polygon point</returns>
     double calculate_angle(int32_t distance, PolygonPoint polygon_point, const Polygon &polygon);
-    std::vector<double> calculate_angles(
-        const BoundingBoxes &glyph_sizes,
-        const PolygonPoints &polygon_points,
-        const Polygon &polygon
-    );
+    std::vector<double> calculate_angles(int32_t distance, const PolygonPoints& polygon_points, const Polygon &polygon);
 
 } // namespace Emboss
 

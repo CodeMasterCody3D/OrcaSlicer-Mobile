@@ -1,13 +1,5 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Vojtěch Bubník @bubnikv, Enrico Turri @enricoturri1966
-///|/ Copyright (c) Slic3r 2014 - 2015 Alessandro Ranellucci @alranel
-///|/ Copyright (c) 2014 Petr Ledvina @ledvinap
-///|/
-///|/ ported from lib/Slic3r/Geometry/BoundingBox.pm:
-///|/ Copyright (c) Slic3r 2013 - 2014 Alessandro Ranellucci @alranel
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "BoundingBox.hpp"
+#include "Polygon.hpp"
 #include <algorithm>
 #include <assert.h>
 
@@ -54,6 +46,13 @@ BoundingBox BoundingBox::rotated(double angle, const Point &center) const
     out.merge(this->max.rotated(angle, center));
     out.merge(Point(this->min.x(), this->max.y()).rotated(angle, center));
     out.merge(Point(this->max.x(), this->min.y()).rotated(angle, center));
+    return out;
+}
+
+BoundingBox BoundingBox::scaled(double factor) const
+{
+    BoundingBox out(*this);
+    out.scale(factor);
     return out;
 }
 
@@ -109,6 +108,27 @@ BoundingBoxBase<PointType, APointsType>::merge(const BoundingBoxBase<PointType, 
 template void BoundingBoxBase<Point, Points>::merge(const BoundingBoxBase<Point, Points> &bb);
 template void BoundingBoxBase<Vec2f>::merge(const BoundingBoxBase<Vec2f> &bb);
 template void BoundingBoxBase<Vec2d>::merge(const BoundingBoxBase<Vec2d> &bb);
+
+//BBS
+template <class PointType>
+Polygon BoundingBox3Base<PointType>::polygon(bool is_scaled) const
+{
+    Polygon polygon;
+    polygon.points.clear();
+    polygon.points.resize(4);
+    double scale_factor = 1 / (is_scaled ? SCALING_FACTOR : 1);
+    polygon.points[0](0) = this->min(0) * scale_factor;
+    polygon.points[0](1) = this->min(1) * scale_factor;
+    polygon.points[1](0) = this->max(0) * scale_factor;
+    polygon.points[1](1) = this->min(1) * scale_factor;
+    polygon.points[2](0) = this->max(0) * scale_factor;
+    polygon.points[2](1) = this->max(1) * scale_factor;
+    polygon.points[3](0) = this->min(0) * scale_factor;
+    polygon.points[3](1) = this->max(1) * scale_factor;
+    return polygon;
+}
+template Polygon BoundingBox3Base<Vec3f>::polygon(bool is_scaled) const;
+template Polygon BoundingBox3Base<Vec3d>::polygon(bool is_scaled) const;
 
 template <class PointType> void
 BoundingBox3Base<PointType>::merge(const PointType &point)

@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Vojtěch Bubník @bubnikv, Lukáš Matěna @lukasmatena, David Kocík @kocikdav, Enrico Turri @enricoturri1966, Oleksandra Iushchenko @YuSanka, Vojtěch Král @vojtechkral
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 // Based on implementation by @platsch
 
 #ifndef slic3r_Slicing_hpp_
@@ -13,9 +9,9 @@
 #include <type_traits>
 #include <vector>
 
-#include "Point.hpp"
 #include "libslic3r.h"
 #include "Utils.hpp"
+#include "Point.hpp"
 
 namespace Slic3r
 {
@@ -33,12 +29,13 @@ struct SlicingParameters
 {
 	SlicingParameters() = default;
 
+    // Orca: XYZ filament compensation introduced object_shrinkage_compensation
     static SlicingParameters create_from_config(
-        const PrintConfig               &print_config,
-        const PrintObjectConfig         &object_config,
-        coordf_t                         object_height,
-        const std::vector<unsigned int> &object_extruders,
-        const Vec3d                     &object_shrinkage_compensation);
+         const PrintConfig               &print_config,
+         const PrintObjectConfig         &object_config,
+         coordf_t                         object_height,
+         const std::vector<unsigned int> &object_extruders,
+         const Vec3d                     &object_shrinkage_compensation);
 
     // Has any raft layers?
     bool        has_raft() const { return raft_layers() > 0; }
@@ -48,12 +45,11 @@ struct SlicingParameters
     bool        first_object_layer_height_fixed()  const { return ! has_raft() || first_object_layer_bridging; }
 
     // Height of the object to be printed. This value does not contain the raft height.
-    // This value is scaled by shrinkage compensation in the Z-axis.
     coordf_t    object_print_z_height() const { return object_print_z_max - object_print_z_min; }
-
+    
     // Height of the object to be printed. This value does not contain the raft height.
-    // This value isn't scaled by shrinkage compensation in the Z-axis.
-    coordf_t    object_print_z_uncompensated_height() const { return object_print_z_uncompensated_max - object_print_z_min; }
+     // This value isn't scaled by shrinkage compensation in the Z-axis.
+     coordf_t    object_print_z_uncompensated_height() const { return object_print_z_uncompensated_max - object_print_z_min; }
 
     bool        valid { false };
 
@@ -88,9 +84,10 @@ struct SlicingParameters
     // If the object is printed over a non-soluble raft, the first layer may be printed with a briding flow.
     bool 		first_object_layer_bridging { false };
 
-    // Soluble interface? (PLA soluble in water, HIPS soluble in lemonen)
-    // otherwise the interface must be broken off.
-    bool        soluble_interface { false };
+    // Zero-gap interface flags for top / bottom / raft contact.
+    bool        zero_gap_interface_top { false };
+    bool        zero_gap_interface_bottom { false };
+    bool        zero_gap_interface_raft { false };
     // Gap when placing object over raft.
     coordf_t    gap_raft_object { 0 };
     // Gap when placing support over object.
@@ -104,15 +101,16 @@ struct SlicingParameters
     coordf_t    raft_base_top_z { 0 };
     coordf_t    raft_interface_top_z { 0 };
     coordf_t    raft_contact_top_z { 0 };
-    // In case of a soluble interface, object_print_z_min == raft_contact_top_z, otherwise there is a gap between the raft and the 1st object layer.
+    // In case of a zero-gap raft interface, object_print_z_min == raft_contact_top_z, otherwise there is a gap between the raft and the 1st object layer.
     coordf_t 	object_print_z_min { 0 };
     // This value of maximum print Z is scaled by shrinkage compensation in the Z-axis.
     coordf_t 	object_print_z_max { 0 };
-
+    
+    // Orca: XYZ shrinkage compensation
     // This value of maximum print Z isn't scaled by shrinkage compensation.
-    coordf_t 	object_print_z_uncompensated_max { 0 };
-    // Scaling factor for compensating shrinkage in Z-axis.
-    coordf_t    object_shrinkage_compensation_z { 0 };
+     coordf_t     object_print_z_uncompensated_max { 0 };
+     // Scaling factor for compensating shrinkage in Z-axis.
+     coordf_t    object_shrinkage_compensation_z { 0 };
 };
 static_assert(IsTriviallyCopyable<SlicingParameters>::value, "SlicingParameters class is not POD (and it should be - see constructor).");
 
@@ -133,10 +131,16 @@ inline bool equal_layering(const SlicingParameters &sp1, const SlicingParameters
             sp1.first_print_layer_height            == sp2.first_print_layer_height             &&
             sp1.first_object_layer_height           == sp2.first_object_layer_height            &&
             sp1.first_object_layer_bridging         == sp2.first_object_layer_bridging          &&
-            sp1.soluble_interface                   == sp2.soluble_interface                    &&
+            // BBS: following  are not required for equal layer height.
+            // Since the z-gap diff may be multiple of layer height.
+#if 0
+            sp1.zero_gap_interface_top              == sp2.zero_gap_interface_top               &&
+            sp1.zero_gap_interface_bottom           == sp2.zero_gap_interface_bottom            &&
+            sp1.zero_gap_interface_raft             == sp2.zero_gap_interface_raft              &&
             sp1.gap_raft_object                     == sp2.gap_raft_object                      &&
             sp1.gap_object_support                  == sp2.gap_object_support                   &&
             sp1.gap_support_object                  == sp2.gap_support_object                   &&
+#endif
             sp1.raft_base_top_z                     == sp2.raft_base_top_z                      &&
             sp1.raft_interface_top_z                == sp2.raft_interface_top_z                 &&
             sp1.raft_contact_top_z                  == sp2.raft_contact_top_z                   &&
@@ -175,6 +179,7 @@ enum LayerHeightEditActionType : unsigned int {
 };
 
 void adjust_layer_height_profile(
+    const ModelObject           &model_object,
     const SlicingParameters     &slicing_params,
     std::vector<coordf_t>       &layer_height_profile,
     coordf_t                     z,
@@ -186,7 +191,8 @@ void adjust_layer_height_profile(
 // The object layers are based at z=0, ignoring the raft layers.
 std::vector<coordf_t> generate_object_layers(
     const SlicingParameters     &slicing_params,
-    const std::vector<coordf_t> &layer_height_profile);
+    const std::vector<coordf_t> &layer_height_profile,
+    bool is_precise_z_height);
 
 // Check whether the layer height profile describes a fixed layer height profile.
 bool check_object_layers_fixed(

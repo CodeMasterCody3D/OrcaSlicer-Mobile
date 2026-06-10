@@ -113,6 +113,8 @@ public class BedFragment extends Fragment {
     private GCodeProcessorResult gCodeResult;
     private UnfoldMenu currentUnfoldMenu;
 
+    private ru.ytkab0bp.slicebeam.view.PaintModeView paintModeView;
+
     private BedSwipeDownLayout swipeDownLayout;
     private boolean hasWebError;
     private WebView panelWebView;
@@ -179,17 +181,105 @@ public class BedFragment extends Fragment {
         new BeamAlertDialogBuilder(ctx)
                 .setTitle(R.string.ModelContextMenuTitle)
                 .setItems(new CharSequence[] {
-                        ctx.getString(R.string.ModelContextFillBed)
+                        ctx.getString(R.string.ModelContextDuplicate),
+                        ctx.getString(R.string.ModelContextDelete),
+                        ctx.getString(R.string.ModelContextFillBed),
+                        ctx.getString(R.string.ModelContextCenterOnBed),
+                        ctx.getString(R.string.ModelContextAutoOrient),
+                        ctx.getString(R.string.ModelContextResetRotation),
+                        ctx.getString(R.string.ModelContextResetScale),
+                        ctx.getString(R.string.ModelContextSetOnFace),
+                        ctx.getString(R.string.ModelContextSelectAll),
+                        ctx.getString(R.string.ModelContextDeleteAll),
+                        "Paint colors"
                 }, (dialog, which) -> {
-                    if (which != 0) return;
-                    glView.fillBedWithSelectedModel(addedCopies -> {
-                        updateModel();
-                        Toast.makeText(ctx,
-                                addedCopies > 0
-                                        ? ctx.getString(R.string.ModelContextFillBedFinished, addedCopies)
-                                        : ctx.getString(R.string.ModelContextFillBedNoRoom),
-                                Toast.LENGTH_SHORT).show();
-                    });
+                    switch (which) {
+                        case 0: // Duplicate
+                            glView.duplicateSelectedModel(() -> {
+                                updateModel();
+                                Toast.makeText(ctx, R.string.ModelContextDuplicated, Toast.LENGTH_SHORT).show();
+                            });
+                            break;
+                        case 1: // Delete
+                            glView.deleteSelectedModel(() -> {
+                                updateModel();
+                                Toast.makeText(ctx, R.string.ModelContextDeleted, Toast.LENGTH_SHORT).show();
+                            });
+                            break;
+                        case 2: // Fill Bed
+                            glView.fillBedWithSelectedModel(addedCopies -> {
+                                updateModel();
+                                Toast.makeText(ctx,
+                                        addedCopies > 0
+                                                ? ctx.getString(R.string.ModelContextFillBedFinished, addedCopies)
+                                                : ctx.getString(R.string.ModelContextFillBedNoRoom),
+                                        Toast.LENGTH_SHORT).show();
+                            });
+                            break;
+                        case 3: // Center on Bed
+                            glView.centerSelectedOnBed(() -> {
+                                updateModel();
+                                Toast.makeText(ctx, R.string.ModelContextCentered, Toast.LENGTH_SHORT).show();
+                            });
+                            break;
+                        case 4: // Auto-orient
+                            glView.queueEvent(() -> {
+                                glView.getRenderer().getModel().autoOrient(objectIndex);
+                                glView.getRenderer().getModel().ensureOnBed(objectIndex);
+                                glView.getRenderer().invalidateGlModel(objectIndex);
+                                glView.requestRender();
+                                ViewUtils.postOnMainThread(() -> {
+                                    updateModel();
+                                    Toast.makeText(ctx, R.string.ModelContextAutoOriented, Toast.LENGTH_SHORT).show();
+                                });
+                            });
+                            break;
+                        case 5: // Reset Rotation
+                            glView.queueEvent(() -> {
+                                glView.getRenderer().setSelectionRotation(0, 0, 0);
+                                glView.getRenderer().getModel().ensureOnBed(objectIndex);
+                                glView.getRenderer().invalidateSelectionObject();
+                                glView.requestRender();
+                                ViewUtils.postOnMainThread(() -> {
+                                    updateModel();
+                                    Toast.makeText(ctx, R.string.ModelContextResetRotationDone, Toast.LENGTH_SHORT).show();
+                                });
+                            });
+                            break;
+                        case 6: // Reset Scale
+                            glView.queueEvent(() -> {
+                                glView.getRenderer().setSelectionScale(1, 1, 1);
+                                glView.getRenderer().getModel().ensureOnBed(objectIndex);
+                                glView.getRenderer().invalidateSelectionObject();
+                                glView.requestRender();
+                                ViewUtils.postOnMainThread(() -> {
+                                    updateModel();
+                                    Toast.makeText(ctx, R.string.ModelContextResetScaleDone, Toast.LENGTH_SHORT).show();
+                                });
+                            });
+                            break;
+                        case 7: // Lay on face (enter flatten mode)
+                            glView.queueEvent(() -> {
+                                glView.getRenderer().setInFlattenMode(true);
+                                glView.requestRender();
+                            });
+                            break;
+                        case 8: // Select All
+                            glView.selectAllModels(() -> {
+                                updateModel();
+                                Toast.makeText(ctx, R.string.ModelContextSelectedAll, Toast.LENGTH_SHORT).show();
+                            });
+                            break;
+                        case 9: // Delete All
+                            glView.deleteAllModels(() -> {
+                                updateModel();
+                                Toast.makeText(ctx, R.string.ModelContextDeletedAll, Toast.LENGTH_SHORT).show();
+                            });
+                            break;
+                        case 10: // Paint colors
+                            enterPaintMode(objectIndex);
+                            break;
+                    }
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
@@ -215,6 +305,28 @@ public class BedFragment extends Fragment {
                 .show();
     }
 
+    private void enterPaintMode(int objectIndex) {
+        Context ctx = getContext();
+        if (ctx == null || glView == null || objectIndex == -1 || paintModeView != null) return;
+        glView.queueEvent(() -> {
+            glView.getRenderer().beginPaint(objectIndex);
+            glView.requestRender();
+        });
+        paintModeView = new ru.ytkab0bp.slicebeam.view.PaintModeView(ctx, glView, this::exitPaintMode);
+        overlayLayout.addView(paintModeView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void exitPaintMode() {
+        if (paintModeView != null) {
+            overlayLayout.removeView(paintModeView);
+            paintModeView = null;
+        }
+    }
+
+    public boolean isPaintMode() {
+        return paintModeView != null;
+    }
+
     public void loadGCode(File f) {
         gCodeResult = new GCodeProcessorResult(f);
         ViewUtils.postOnMainThread(()-> {
@@ -238,6 +350,14 @@ public class BedFragment extends Fragment {
 
     @Override
     public boolean onBackPressed() {
+        if (paintModeView != null) {
+            glView.queueEvent(() -> {
+                glView.getRenderer().endPaint(true);
+                glView.requestRender();
+            });
+            exitPaintMode();
+            return true;
+        }
         if (currentUnfoldMenu != null) {
             currentUnfoldMenu.dismiss();
             return true;
@@ -447,6 +567,7 @@ public class BedFragment extends Fragment {
                             Process.setThreadPriority(-20);
 
                             try {
+                                SliceBeam.ensureCompatibleSelection();
                                 SliceBeam.genCurrentConfig();
                             } catch (Exception e) {
                                 Log.e("BedFragment", "Failed to write config", e);
@@ -462,7 +583,9 @@ public class BedFragment extends Fragment {
                             }
 
                             if (!DEBUG_VIEWER) {
-                                gCodeResult = glView.getRenderer().getModel().slice(cfg.getAbsolutePath(), gcode.getAbsolutePath(), (progress, text) -> SliceBeam.EVENT_BUS.fireEvent(new SlicingProgressEvent(progress, text)));
+                                gCodeResult = glView.getRenderer().getModel().slice(cfg.getAbsolutePath(), gcode.getAbsolutePath(), (progress, text) -> SliceBeam.EVENT_BUS.fireEvent(new SlicingProgressEvent(progress, text)),
+                                        SliceBeam.PENDING_CALIB_MODE, SliceBeam.PENDING_CALIB_START, SliceBeam.PENDING_CALIB_END, SliceBeam.PENDING_CALIB_STEP);
+                                SliceBeam.PENDING_CALIB_MODE = 0; // consume the calibration after one slice
                                 SliceBeam.EVENT_BUS.fireEvent(new SlicingProgressEvent(100, ""));
                             } else {
                                 gCodeResult = new GCodeProcessorResult(gcode);

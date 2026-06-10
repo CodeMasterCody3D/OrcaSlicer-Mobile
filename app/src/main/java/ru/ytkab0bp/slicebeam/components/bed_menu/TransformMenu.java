@@ -55,6 +55,7 @@ public class TransformMenu extends ListBedMenu {
     protected List<SimpleRecyclerItem> onCreateItems(boolean portrait) {
         return Arrays.asList(
                 new BedMenuItem(R.string.MenuTransformScale, R.drawable.arrow_up_right_corner_outline_24).setEnabled(hasSelection()).onClick(v -> fragment.showUnfoldMenu(new ScaleMenu(), v)),
+                new BedMenuItem(R.string.MenuTransformCut, R.drawable.menu_transform_cut_or_mirror_28).setEnabled(hasSelection()).onClick(v -> fragment.showUnfoldMenu(new CutMenu(), v)),
                 new BedMenuItem(R.string.MenuTransformMirror, R.drawable.menu_transform_cut_or_mirror_28).setEnabled(hasSelection()).onClick(v -> {
                     Context ctx = fragment.getContext();
                     new BeamAlertDialogBuilder(ctx)
@@ -105,6 +106,9 @@ public class TransformMenu extends ListBedMenu {
 
         ((BedMenuItem) adapter.getItems().get(1)).setEnabled(hasSelection());
         adapter.notifyItemChanged(1);
+
+        ((BedMenuItem) adapter.getItems().get(2)).setEnabled(hasSelection());
+        adapter.notifyItemChanged(2);
     }
 
     @EventHandler(runOnMainThread = true)
@@ -114,6 +118,9 @@ public class TransformMenu extends ListBedMenu {
 
         ((BedMenuItem) adapter.getItems().get(1)).setEnabled(hasSelection());
         adapter.notifyItemChanged(1);
+
+        ((BedMenuItem) adapter.getItems().get(2)).setEnabled(hasSelection());
+        adapter.notifyItemChanged(2);
     }
 
     public final class ScaleMenu extends UnfoldMenu {
@@ -259,6 +266,13 @@ public class TransformMenu extends ListBedMenu {
             dr.setBounds(0, 0, size, size);
             sb.setSpan(new TextColorImageSpan(dr, 0), sb.length() - 1, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             return sb;
+        }
+
+        private void doScale(double sx, double sy, double sz) {
+            int j = fragment.getGlView().getRenderer().getSelectedObject();
+            if (j == -1) return;
+            Model model = fragment.getGlView().getRenderer().getModel();
+            model.scale(j, sx, sy, sz);
         }
 
         private void showManualEditor(int title, boolean x, boolean y, boolean z) {
@@ -565,6 +579,107 @@ public class TransformMenu extends ListBedMenu {
             } else {
                 setSelectionValues();
             }
+        }
+    }
+
+    public final class CutMenu extends UnfoldMenu {
+        private TextView zTitle, rotXTitle, rotYTitle;
+        private PositionScrollView zTrack, rotXTrack, rotYTrack;
+        private final Vec3d tempVec = new Vec3d();
+        private final Vec3d tempVec2 = new Vec3d();
+        private double minZ, maxZ, midZ;
+
+        public CutMenu() {
+            int j = TransformMenu.this.fragment.getGlView().getRenderer().getSelectedObject();
+            if (j == -1) return;
+            Model model = TransformMenu.this.fragment.getGlView().getRenderer().getModel();
+            model.getBoundingBoxExact(j, tempVec, tempVec2);
+            minZ = tempVec.z;
+            maxZ = tempVec2.z;
+            midZ = (minZ + maxZ) / 2.0;
+        }
+
+        @Override
+        protected View onCreateView(Context ctx, boolean portrait) {
+            LinearLayout ll = new LinearLayout(ctx);
+            ll.setOrientation(LinearLayout.VERTICAL);
+            ll.setPadding(0, ViewUtils.dp(12), 0, 0);
+
+            zTitle = new TextView(ctx);
+            zTitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            zTitle.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            zTitle.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+            zTitle.setGravity(Gravity.CENTER);
+            zTitle.setText("Z = " + String.format(java.util.Locale.US, "%.2f", midZ) + " mm");
+            ll.addView(zTitle, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(20)) {{
+                bottomMargin = ViewUtils.dp(4);
+            }});
+
+            zTrack = new PositionScrollView(ctx);
+            zTrack.setActiveColor(R.attr.zTrackColor);
+            zTrack.setMinMax((int)(minZ * 100), (int)(maxZ * 100));
+            zTrack.setCurrentPosition((int)(midZ * 100));
+            zTrack.setListener(integer -> zTitle.setText("Z = " + String.format(java.util.Locale.US, "%.2f", integer / 100.0) + " mm"));
+            ll.addView(zTrack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(80)));
+
+            rotXTitle = new TextView(ctx);
+            rotXTitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            rotXTitle.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            rotXTitle.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+            rotXTitle.setGravity(Gravity.CENTER);
+            rotXTitle.setText("Rotate X = 0°");
+            ll.addView(rotXTitle, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(20)) {{
+                topMargin = ViewUtils.dp(8); bottomMargin = ViewUtils.dp(4);
+            }});
+
+            rotXTrack = new PositionScrollView(ctx);
+            rotXTrack.setActiveColor(R.attr.xTrackColor);
+            rotXTrack.setMinMax(-18000, 18000);
+            rotXTrack.setCurrentPosition(0);
+            rotXTrack.setListener(integer -> rotXTitle.setText("Rotate X = " + (integer / 100) + "°"));
+            ll.addView(rotXTrack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(80)));
+
+            rotYTitle = new TextView(ctx);
+            rotYTitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            rotYTitle.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            rotYTitle.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+            rotYTitle.setGravity(Gravity.CENTER);
+            rotYTitle.setText("Rotate Y = 0°");
+            ll.addView(rotYTitle, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(20)) {{
+                topMargin = ViewUtils.dp(8); bottomMargin = ViewUtils.dp(4);
+            }});
+
+            rotYTrack = new PositionScrollView(ctx);
+            rotYTrack.setActiveColor(R.attr.yTrackColor);
+            rotYTrack.setMinMax(-18000, 18000);
+            rotYTrack.setCurrentPosition(0);
+            rotYTrack.setListener(integer -> rotYTitle.setText("Rotate Y = " + (integer / 100) + "°"));
+            ll.addView(rotYTrack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(80)));
+
+            android.widget.Button applyBtn = new android.widget.Button(ctx);
+            applyBtn.setText("Apply Cut");
+            applyBtn.setOnClickListener(v -> {
+                int objIdx = fragment.getGlView().getRenderer().getSelectedObject();
+                if (objIdx != -1) {
+                    double z = zTrack.getCurrentPosition() / 100.0;
+                    double rotXRad = Math.toRadians(rotXTrack.getCurrentPosition() / 100.0);
+                    double rotYRad = Math.toRadians(rotYTrack.getCurrentPosition() / 100.0);
+                    fragment.getGlView().getRenderer().getModel().cut(objIdx, z, rotXRad, rotYRad, true, true);
+                    fragment.updateModel();
+                }
+                dismiss();
+            });
+            ll.addView(applyBtn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+                topMargin = ViewUtils.dp(16);
+                leftMargin = rightMargin = ViewUtils.dp(32);
+            }});
+
+            return ll;
+        }
+
+        @Override
+        public int getRequestedSize(FrameLayout into, boolean portrait) {
+            return portrait ? ViewUtils.dp(400) : (int) (into.getWidth() * 0.5f);
         }
     }
 }

@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2019 - 2020 Lukáš Matěna @lukasmatena, Enrico Turri @enricoturri1966
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "ThumbnailData.hpp"
 
 namespace Slic3r {
@@ -16,6 +12,7 @@ void ThumbnailData::set(unsigned int w, unsigned int h)
         width = w;
         height = h;
         // defaults to white texture
+        pixels.clear();
         pixels = std::vector<unsigned char>(width * height * 4, 255);
     }
 }

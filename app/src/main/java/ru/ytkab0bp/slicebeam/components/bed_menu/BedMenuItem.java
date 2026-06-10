@@ -48,6 +48,7 @@ public class BedMenuItem extends SimpleRecyclerItem<BedMenuItem.BedMenuItemHolde
     public boolean isChecked = false;
     public boolean isCheckable = false;
     public boolean isShiny = false;
+    public float titleTextSizeDp = 9.5f;
     public View.OnClickListener clickListener;
     public CompoundButton.OnCheckedChangeListener checkedChangeListener;
 
@@ -80,6 +81,11 @@ public class BedMenuItem extends SimpleRecyclerItem<BedMenuItem.BedMenuItemHolde
 
     public BedMenuItem setSingleLine(boolean singleLine) {
         isSingleLine = singleLine;
+        return this;
+    }
+
+    public BedMenuItem setTitleTextSize(float dp) {
+        titleTextSizeDp = dp;
         return this;
     }
 
@@ -121,7 +127,7 @@ public class BedMenuItem extends SimpleRecyclerItem<BedMenuItem.BedMenuItemHolde
             addView(icon, new LinearLayout.LayoutParams(ViewUtils.dp(24), ViewUtils.dp(24)));
 
             title = new TextView(context);
-            title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
+            title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 9.5f);
             title.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
             title.setGravity(Gravity.CENTER);
             title.setMaxLines(2);
@@ -233,6 +239,7 @@ public class BedMenuItem extends SimpleRecyclerItem<BedMenuItem.BedMenuItemHolde
             enabled = item.isEnabled;
             shiny = item.isShiny;
             title.setMaxLines(item.isSingleLine ? 1 : 2);
+            title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, item.titleTextSizeDp);
             title.setText(item.titleRes);
             icon.setImageResource(item.iconRes);
             checkedProgress = item.isCheckable && item.isChecked ? 1 : 0;

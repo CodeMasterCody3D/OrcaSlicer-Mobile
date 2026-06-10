@@ -1,17 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Vojtěch Bubník @bubnikv, Enrico Turri @enricoturri1966, Lukáš Matěna @lukasmatena, Filip Sykala @Jony01, Tomáš Mészáros @tamasmeszaros
-///|/ Copyright (c) Slic3r 2013 - 2016 Alessandro Ranellucci @alranel
-///|/
-///|/ ported from lib/Slic3r/Geometry.pm:
-///|/ Copyright (c) Prusa Research 2017 - 2022 Vojtěch Bubník @bubnikv
-///|/ Copyright (c) Slic3r 2011 - 2015 Alessandro Ranellucci @alranel
-///|/ Copyright (c) 2013 Jose Luis Perez Diez
-///|/ Copyright (c) 2013 Anders Sundman
-///|/ Copyright (c) 2013 Jesse Vincent
-///|/ Copyright (c) 2012 Mike Sheldrake @mesheldrake
-///|/ Copyright (c) 2012 Mark Hindess
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "libslic3r.h"
 #include "Exception.hpp"
 #include "Geometry.hpp"
@@ -38,7 +24,7 @@
 #define BOOST_NO_CXX17_HDR_STRING_VIEW
 #endif
 
-namespace Slic3r::Geometry {
+namespace Slic3r { namespace Geometry {
 
 bool directions_parallel(double angle1, double angle2, double max_diff)
 {
@@ -64,17 +50,24 @@ bool contains(const std::vector<T> &vector, const Point &point)
 }
 template bool contains(const ExPolygons &vector, const Point &point);
 
+double rad2deg_dir(double angle)
+{
+    angle = (angle < PI) ? (-angle + PI/2.0) : (angle + PI/2.0);
+    if (angle < 0) angle += PI;
+    return rad2deg(angle);
+}
+
 void simplify_polygons(const Polygons &polygons, double tolerance, Polygons* retval)
 {
-    Polygons simplified_raw;
-    for (const Polygon &source_polygon : polygons) {
-        Points simplified = MultiPoint::douglas_peucker(to_polyline(source_polygon).points, tolerance);
-        if (simplified.size() > 3) {
-            simplified.pop_back();
-            simplified_raw.push_back(Polygon{ std::move(simplified) });
-        }
+    Polygons pp;
+    for (Polygons::const_iterator it = polygons.begin(); it != polygons.end(); ++it) {
+        Polygon p = *it;
+        p.points.push_back(p.points.front());
+        p.points = MultiPoint::_douglas_peucker(p.points, tolerance);
+        p.points.pop_back();
+        pp.push_back(p);
     }
-    *retval = Slic3r::simplify_polygons(simplified_raw);
+    *retval = Slic3r::simplify_polygons(pp);
 }
 
 double linint(double value, double oldmin, double oldmax, double newmin, double newmax)
@@ -388,7 +381,7 @@ Transform3d scale_transform(const Vec3d& scale)
     return transform;
 }
 
-Vec3d extract_rotation(const Eigen::Matrix<double, 3, 3, Eigen::DontAlign>& rotation_matrix)
+Vec3d extract_euler_angles(const Eigen::Matrix<double, 3, 3, Eigen::DontAlign>& rotation_matrix)
 {
     // The extracted "rotation" is a triplet of numbers such that Geometry::rotation_transform
     // returns the original transform. Because of the chosen order of rotations, the triplet
@@ -398,7 +391,7 @@ Vec3d extract_rotation(const Eigen::Matrix<double, 3, 3, Eigen::DontAlign>& rota
     return angles;
 }
 
-Vec3d extract_rotation(const Transform3d& transform)
+Vec3d extract_euler_angles(const Transform3d& transform)
 {
     // use only the non-translational part of the transform
     Eigen::Matrix<double, 3, 3, Eigen::DontAlign> m = transform.matrix().block(0, 0, 3, 3);
@@ -406,7 +399,17 @@ Vec3d extract_rotation(const Transform3d& transform)
     m.col(0).normalize();
     m.col(1).normalize();
     m.col(2).normalize();
-    return extract_rotation(m);
+    return extract_euler_angles(m);
+}
+
+void rotation_from_two_vectors(Vec3d from, Vec3d to, Vec3d& rotation_axis, double& phi, Matrix3d* rotation_matrix)
+{
+    const Matrix3d m = Eigen::Quaterniond().setFromTwoVectors(from, to).toRotationMatrix();
+    const Eigen::AngleAxisd aa(m);
+    rotation_axis = aa.axis();
+    phi           = aa.angle();
+    if (rotation_matrix)
+        *rotation_matrix = m;
 }
 
 Transform3d Transformation::get_offset_matrix() const
@@ -467,12 +470,22 @@ static bool contains_skew(const Transform3d& trafo)
 
 Vec3d Transformation::get_rotation() const
 {
-    return extract_rotation(extract_rotation_matrix(m_matrix));
+    return extract_euler_angles(extract_rotation_matrix(m_matrix));
 }
 
 Transform3d Transformation::get_rotation_matrix() const
 {
     return extract_rotation_matrix(m_matrix);
+}
+
+Vec3d Transformation::get_rotation_by_quaternion() const
+{
+    Matrix3d           rotation_matrix = m_matrix.matrix().block(0, 0, 3, 3);
+    Eigen::Quaterniond quaternion(rotation_matrix);
+    quaternion.normalize();
+    Vec3d temp_rotation = quaternion.matrix().eulerAngles(2, 1, 0);
+    std::swap(temp_rotation(0), temp_rotation(2));
+    return temp_rotation;
 }
 
 void Transformation::set_rotation(const Vec3d& rotation)
@@ -489,7 +502,7 @@ void Transformation::set_rotation(Axis axis, double rotation)
         rotation = 0.0;
 
     auto [curr_rotation, scale] = extract_rotation_scale(m_matrix);
-    Vec3d angles = extract_rotation(curr_rotation);
+    Vec3d angles = extract_euler_angles(curr_rotation);
     angles[axis] = rotation;
 
     const Vec3d offset = get_offset();
@@ -637,29 +650,134 @@ Transform3d Transformation::get_matrix_no_scaling_factor() const
     return copy.get_matrix();
 }
 
+// Orca: Implement prusa's filament shrink compensation approach
 Transform3d Transformation::get_matrix_with_applied_shrinkage_compensation(const Vec3d &shrinkage_compensation) const {
-    const Transform3d shrinkage_trafo = Geometry::scale_transform(shrinkage_compensation);
-    const Vec3d trafo_offset         = this->get_offset();
-    const Vec3d trafo_offset_xy      = Vec3d(trafo_offset.x(), trafo_offset.y(), 0.);
+     const Transform3d shrinkage_trafo = Geometry::scale_transform(shrinkage_compensation);
+     const Vec3d trafo_offset         = this->get_offset();
+     const Vec3d trafo_offset_xy      = Vec3d(trafo_offset.x(), trafo_offset.y(), 0.);
 
-    Transformation copy(*this);
-    copy.set_offset(Axis::X, 0.);
-    copy.set_offset(Axis::Y, 0.);
+     Transformation copy(*this);
+     copy.set_offset(Axis::X, 0.);
+     copy.set_offset(Axis::Y, 0.);
 
-    Transform3d trafo_after_shrinkage    = (shrinkage_trafo * copy.get_matrix());
-    trafo_after_shrinkage.translation() += trafo_offset_xy;
+     Transform3d trafo_after_shrinkage    = (shrinkage_trafo * copy.get_matrix());
+     trafo_after_shrinkage.translation() += trafo_offset_xy;
 
-    return trafo_after_shrinkage;
-}
+     return trafo_after_shrinkage;
+ }
 
 Transformation Transformation::operator * (const Transformation& other) const
 {
     return Transformation(get_matrix() * other.get_matrix());
 }
 
+Transformation Transformation::volume_to_bed_transformation(const Transformation& instance_transformation, const BoundingBoxf3& bbox)
+{
+    Transformation out;
+
+    if (instance_transformation.is_scaling_uniform()) {
+        // No need to run the non-linear least squares fitting for uniform scaling.
+        // Just set the inverse.
+        out.set_matrix(instance_transformation.get_matrix_no_offset().inverse());
+    }
+    else if (is_rotation_ninety_degrees(instance_transformation.get_rotation())) {
+        // Anisotropic scaling, rotation by multiples of ninety degrees.
+        Eigen::Matrix3d instance_rotation_trafo =
+            (Eigen::AngleAxisd(instance_transformation.get_rotation().z(), Vec3d::UnitZ()) *
+            Eigen::AngleAxisd(instance_transformation.get_rotation().y(), Vec3d::UnitY()) *
+            Eigen::AngleAxisd(instance_transformation.get_rotation().x(), Vec3d::UnitX())).toRotationMatrix();
+        Eigen::Matrix3d volume_rotation_trafo =
+            (Eigen::AngleAxisd(-instance_transformation.get_rotation().x(), Vec3d::UnitX()) *
+            Eigen::AngleAxisd(-instance_transformation.get_rotation().y(), Vec3d::UnitY()) *
+            Eigen::AngleAxisd(-instance_transformation.get_rotation().z(), Vec3d::UnitZ())).toRotationMatrix();
+
+        // 8 corners of the bounding box.
+        auto pts = Eigen::MatrixXd(8, 3);
+        pts(0, 0) = bbox.min.x(); pts(0, 1) = bbox.min.y(); pts(0, 2) = bbox.min.z();
+        pts(1, 0) = bbox.min.x(); pts(1, 1) = bbox.min.y(); pts(1, 2) = bbox.max.z();
+        pts(2, 0) = bbox.min.x(); pts(2, 1) = bbox.max.y(); pts(2, 2) = bbox.min.z();
+        pts(3, 0) = bbox.min.x(); pts(3, 1) = bbox.max.y(); pts(3, 2) = bbox.max.z();
+        pts(4, 0) = bbox.max.x(); pts(4, 1) = bbox.min.y(); pts(4, 2) = bbox.min.z();
+        pts(5, 0) = bbox.max.x(); pts(5, 1) = bbox.min.y(); pts(5, 2) = bbox.max.z();
+        pts(6, 0) = bbox.max.x(); pts(6, 1) = bbox.max.y(); pts(6, 2) = bbox.min.z();
+        pts(7, 0) = bbox.max.x(); pts(7, 1) = bbox.max.y(); pts(7, 2) = bbox.max.z();
+
+        // Corners of the bounding box transformed into the modifier mesh coordinate space, with inverse rotation applied to the modifier.
+        auto qs = (pts *
+            (instance_rotation_trafo *
+            Eigen::Scaling(instance_transformation.get_scaling_factor().cwiseProduct(instance_transformation.get_mirror())) *
+            volume_rotation_trafo).inverse().transpose()).eval();
+        // Fill in scaling based on least squares fitting of the bounding box corners.
+        Vec3d scale;
+        for (int i = 0; i < 3; ++i)
+            scale(i) = pts.col(i).dot(qs.col(i)) / pts.col(i).dot(pts.col(i));
+
+        out.set_rotation(Geometry::extract_euler_angles(volume_rotation_trafo));
+        out.set_scaling_factor(Vec3d(std::abs(scale.x()), std::abs(scale.y()), std::abs(scale.z())));
+        out.set_mirror(Vec3d(scale.x() > 0 ? 1. : -1, scale.y() > 0 ? 1. : -1, scale.z() > 0 ? 1. : -1));
+    }
+    else
+    {
+        // General anisotropic scaling, general rotation.
+        // Keep the modifier mesh in the instance coordinate system, so the modifier mesh will not be aligned with the world.
+        // Scale it to get the required size.
+        out.set_scaling_factor(instance_transformation.get_scaling_factor().cwiseInverse());
+    }
+
+    return out;
+}
+
+// For parsing a transformation matrix from 3MF / AMF.
+Transform3d transform3d_from_string(const std::string& transform_str)
+{
+    assert(is_decimal_separator_point()); // for atof
+    Transform3d transform = Transform3d::Identity();
+
+    if (!transform_str.empty()) {
+        std::vector<std::string> mat_elements_str;
+        boost::split(mat_elements_str, transform_str, boost::is_any_of(" "), boost::token_compress_on);
+
+        const unsigned int size = (unsigned int)mat_elements_str.size();
+        if (size == 16) {
+            unsigned int i = 0;
+            for (unsigned int r = 0; r < 4; ++r) {
+                for (unsigned int c = 0; c < 4; ++c) {
+                    transform(r, c) = ::atof(mat_elements_str[i++].c_str());
+                }
+            }
+        }
+    }
+
+    return transform;
+}
+
+Eigen::Quaterniond rotation_xyz_diff(const Vec3d &rot_xyz_from, const Vec3d &rot_xyz_to)
+{
+    return
+        // From the current coordinate system to world.
+        Eigen::AngleAxisd(rot_xyz_to.z(), Vec3d::UnitZ()) * Eigen::AngleAxisd(rot_xyz_to.y(), Vec3d::UnitY()) * Eigen::AngleAxisd(rot_xyz_to.x(), Vec3d::UnitX()) *
+        // From world to the initial coordinate system.
+        Eigen::AngleAxisd(-rot_xyz_from.x(), Vec3d::UnitX()) * Eigen::AngleAxisd(-rot_xyz_from.y(), Vec3d::UnitY()) * Eigen::AngleAxisd(-rot_xyz_from.z(), Vec3d::UnitZ());
+}
+
+// This should only be called if it is known, that the two rotations only differ in rotation around the Z axis.
+double rotation_diff_z(const Vec3d &rot_xyz_from, const Vec3d &rot_xyz_to)
+{
+    const Eigen::AngleAxisd angle_axis(rotation_xyz_diff(rot_xyz_from, rot_xyz_to));
+    const Vec3d  axis  = angle_axis.axis();
+    const double angle = angle_axis.angle();
+#ifndef NDEBUG
+    if (std::abs(angle) > 1e-8) {
+        assert(std::abs(axis.x()) < 1e-8);
+        assert(std::abs(axis.y()) < 1e-8);
+    }
+#endif /* NDEBUG */
+    return (axis.z() < 0) ? -angle : angle;
+}
+
 TransformationSVD::TransformationSVD(const Transform3d& trafo)
 {
-    const auto &m0 = trafo.matrix().block<3, 3>(0, 0);
+    const Matrix3d m0 = trafo.matrix().block<3, 3>(0, 0);
     mirror = m0.determinant() < 0.0;
 
     Matrix3d m;
@@ -704,75 +822,42 @@ TransformationSVD::TransformationSVD(const Transform3d& trafo)
         skew = false;
 }
 
-// For parsing a transformation matrix from 3MF / AMF.
-Transform3d transform3d_from_string(const std::string& transform_str)
+ Transformation mat_around_a_point_rotate(const Transformation &InMat, const Vec3d &pt, const Vec3d &axis, float rotate_theta_radian)
 {
-    assert(is_decimal_separator_point()); // for atof
-    Transform3d transform = Transform3d::Identity();
+    auto           xyz = InMat.get_offset();
+    Transformation left;
+    left.set_offset(-xyz); // at world origin
+    auto curMat = left * InMat;
 
-    if (!transform_str.empty()) {
-        std::vector<std::string> mat_elements_str;
-        boost::split(mat_elements_str, transform_str, boost::is_any_of(" "), boost::token_compress_on);
+    auto qua = Eigen::Quaterniond(Eigen::AngleAxisd(rotate_theta_radian, axis));
+    qua.normalize();
+    Transform3d    cur_matrix;
+    Transformation rotateMat4;
+    rotateMat4.set_matrix(cur_matrix.fromPositionOrientationScale(Vec3d(0., 0., 0.), qua, Vec3d(1., 1., 1.)));
 
-        const unsigned int size = (unsigned int)mat_elements_str.size();
-        if (size == 16) {
-            unsigned int i = 0;
-            for (unsigned int r = 0; r < 4; ++r) {
-                for (unsigned int c = 0; c < 4; ++c) {
-                    transform(r, c) = ::atof(mat_elements_str[i++].c_str());
-                }
-            }
-        }
-    }
+    curMat = rotateMat4 * curMat; // along_fix_axis
+    // rotate mat4 along fix pt
+    Transformation temp_world;
+    auto           qua_world = Eigen::Quaterniond(Eigen::AngleAxisd(0, axis));
+    qua_world.normalize();
+    Transform3d cur_matrix_world;
+    temp_world.set_matrix(cur_matrix_world.fromPositionOrientationScale(pt, qua_world, Vec3d(1., 1., 1.)));
+    Vec3d temp_xyz = temp_world.get_matrix().inverse() * xyz;
+    Vec3d new_pos  = temp_world.get_matrix() * (rotateMat4.get_matrix() * temp_xyz);
+    curMat.set_offset(new_pos);
 
-    return transform;
+    return curMat;
 }
 
-Eigen::Quaterniond rotation_xyz_diff(const Vec3d &rot_xyz_from, const Vec3d &rot_xyz_to)
-{
-    return
-        // From the current coordinate system to world.
-        Eigen::AngleAxisd(rot_xyz_to.z(), Vec3d::UnitZ()) * Eigen::AngleAxisd(rot_xyz_to.y(), Vec3d::UnitY()) * Eigen::AngleAxisd(rot_xyz_to.x(), Vec3d::UnitX()) *
-        // From world to the initial coordinate system.
-        Eigen::AngleAxisd(-rot_xyz_from.x(), Vec3d::UnitX()) * Eigen::AngleAxisd(-rot_xyz_from.y(), Vec3d::UnitY()) * Eigen::AngleAxisd(-rot_xyz_from.z(), Vec3d::UnitZ());
-}
-
-// This should only be called if it is known, that the two rotations only differ in rotation around the Z axis.
-double rotation_diff_z(const Transform3d &trafo_from, const Transform3d &trafo_to)
-{
-    auto  m  = trafo_to.linear() * trafo_from.linear().inverse();
-    assert(std::abs(m.determinant() - 1) < EPSILON);
-    Vec3d vx = m * Vec3d(1., 0., 0);
-    // Verify that the linear part of rotation from trafo_from to trafo_to rotates around Z and is unity.
-    assert(std::abs(std::hypot(vx.x(), vx.y()) - 1.) < 1e-5);
-    assert(std::abs(vx.z()) < 1e-5);
-    return atan2(vx.y(), vx.x());
-}
-
-bool trafos_differ_in_rotation_by_z_and_mirroring_by_xy_only(const Transform3d &t1, const Transform3d &t2)
-{
-    if (std::abs(t1.translation().z() - t2.translation().z()) > EPSILON)
-        // One of the object is higher than the other above the build plate (or below the build plate).
-        return false;
-    Matrix3d m1 = t1.matrix().block<3, 3>(0, 0);
-    Matrix3d m2 = t2.matrix().block<3, 3>(0, 0);
-    Matrix3d m = m2.inverse() * m1;
-    Vec3d    z = m.block<3, 1>(0, 2);
-    if (std::abs(z.x()) > EPSILON || std::abs(z.y()) > EPSILON || std::abs(z.z() - 1.) > EPSILON)
-        // Z direction or length changed.
-        return false;
-    // Z still points in the same direction and it has the same length.
-    Vec3d    x = m.block<3, 1>(0, 0);
-    Vec3d    y = m.block<3, 1>(0, 1);
-    if (std::abs(x.z()) > EPSILON || std::abs(y.z()) > EPSILON)
-        return false;
-    double   lx2 = x.squaredNorm();
-    double   ly2 = y.squaredNorm();
-    if (lx2 - 1. > EPSILON * EPSILON || ly2 - 1. > EPSILON * EPSILON)
-        return false;
-    // Verify whether the vectors x, y are still perpendicular.
-    double   d   = x.dot(y);
-    return std::abs(d * d) < EPSILON * lx2 * ly2;
+Transformation generate_transform(const Vec3d& x_dir, const Vec3d& y_dir, const Vec3d& z_dir, const Vec3d& origin) {
+     Matrix3d m;
+     m.col(0) = x_dir.normalized();
+     m.col(1) = y_dir.normalized();
+     m.col(2) = z_dir.normalized();
+     Transform3d    mm(m);
+     Transformation tran(mm);
+     tran.set_offset(origin);
+     return tran;
 }
 
 bool is_point_inside_polygon_corner(const Point &a, const Point &b, const Point &c, const Point &query_point) {
@@ -821,4 +906,4 @@ bool is_point_inside_polygon_corner(const Point &a, const Point &b, const Point 
     }
 }
 
-} // namespace Slic3r::Geometry
+}} // namespace Slic3r::Geometry

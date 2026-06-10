@@ -1,10 +1,6 @@
-///|/ Copyright (c) Prusa Research 2020 - 2023 Oleksandra Iushchenko @YuSanka, Vojtěch Bubník @bubnikv, Tomáš Mészáros @tamasmeszaros
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include <libslic3r/SLA/Pad.hpp>
 #include <libslic3r/SLA/SpatIndex.hpp>
-#include <libslic3r/BoostAdapter.hpp>
+#include <libslic3r/SLA/BoostAdapter.hpp>
 //#include <libslic3r/SLA/Contour3D.hpp>
 #include <libslic3r/TriangleMeshSlicer.hpp>
 
@@ -25,6 +21,9 @@
 #include "I18N.hpp"
 #include <boost/log/trivial.hpp>
 
+//! macro used to mark string used at localization,
+//! return same string
+#define L(s) Slic3r::I18N::translate(s)
 
 namespace Slic3r { namespace sla {
 
@@ -48,7 +47,7 @@ inline indexed_triangle_set straight_walls(const Polygon &plate,
                                            double         lo_z,
                                            double         hi_z)
 {
-    return wall_strip(plate, hi_z, lo_z); //walls(plate, plate, lo_z, hi_z);
+    return walls(plate, plate, lo_z, hi_z);
 }
 
 // Function to cut tiny connector cavities for a given polygon. The input poly
@@ -531,7 +530,7 @@ std::string PadConfig::validate() const
     if (brim_size_mm < MIN_BRIM_SIZE_MM ||
         bottom_offset() > brim_size_mm + wing_distance() ||
         get_waffle_offset(*this) <= MIN_BRIM_SIZE_MM)
-        return _u8L("Pad brim size is too small for the current configuration.");
+        return L("Pad brim size is too small for the current configuration.");
 
     return "";
 }

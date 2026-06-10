@@ -1,13 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Tomáš Mészáros @tamasmeszaros, Vojtěch Bubník @bubnikv, Lukáš Matěna @lukasmatena, Lukáš Hejl @hejllukas, Filip Sykala @Jony01, Oleksandra Iushchenko @YuSanka
-///|/ Copyright (c) Slic3r 2013 - 2016 Alessandro Ranellucci @alranel
-///|/
-///|/ ported from lib/Slic3r/Polygon.pm:
-///|/ Copyright (c) Prusa Research 2017 - 2022 Vojtěch Bubník @bubnikv
-///|/ Copyright (c) Slic3r 2011 - 2014 Alessandro Ranellucci @alranel
-///|/ Copyright (c) 2012 Mark Hindess
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_Polygon_hpp_
 #define slic3r_Polygon_hpp_
 
@@ -86,7 +76,8 @@ public:
 
     bool intersection(const Line& line, Point* intersection) const;
     bool first_intersection(const Line& line, Point* intersection) const;
-    bool intersections(const Line &line, Points *intersections) const;
+    bool intersections(const Line& line, Points* intersections) const;
+    bool overlaps(const Polygons& other) const;
 
     // Considering CCW orientation of this polygon, find all convex resp. concave points
     // with the angle at the vertex larger than a threshold.
@@ -96,6 +87,9 @@ public:
     // Projection of a point onto the polygon.
     Point point_projection(const Point &point) const;
     std::vector<float> parameter_by_length() const;
+    
+    //BBS
+    Polygon transform(const Transform3d& trafo) const;
 
     using iterator = Points::iterator;
     using const_iterator = Points::const_iterator;
@@ -163,7 +157,6 @@ inline void polygons_append(Polygons &dst, Polygons &&src)
     }
 }
 
-Polygons polygons_simplify(Polygons &&polys, double tolerance, bool strictly_simple = true);
 Polygons polygons_simplify(const Polygons &polys, double tolerance, bool strictly_simple = true);
 
 inline void polygons_rotate(Polygons &polys, double angle)
@@ -309,12 +302,7 @@ struct PolygonPoint
 };
 using PolygonPoints = std::vector<PolygonPoint>;
 
-// To replace reserve_vector where it's used for Polygons
-template<class I> IntegerOnly<I, Polygons> reserve_polygons(I cap)
-{
-    return reserve_vector<Polygon, I, typename Polygons::allocator_type>(cap);
-}
-
+bool overlaps(const Polygons& polys1, const Polygons& polys2);
 } // Slic3r
 
 // start Boost

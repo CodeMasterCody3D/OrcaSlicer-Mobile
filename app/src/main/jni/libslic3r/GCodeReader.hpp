@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2017 - 2023 Enrico Turri @enricoturri1966, Vojtěch Bubník @bubnikv
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_GCodeReader_hpp_
 #define slic3r_GCodeReader_hpp_
 
@@ -17,8 +13,6 @@ namespace Slic3r {
 
 class GCodeReader {
 public:
-    typedef std::function<void(float)> ProgressCallback;
-
     class GCodeLine {
     public:
         GCodeLine() { reset(); }
@@ -34,21 +28,18 @@ public:
 
         // Return position in this->raw() string starting with the "axis" character.
         std::string_view axis_pos(char axis) const;
+        void  clear() { m_raw.clear(); }
         bool  has(Axis axis) const { return (m_mask & (1 << int(axis))) != 0; }
         float value(Axis axis) const { return m_axis[axis]; }
         bool  has(char axis) const;
         bool  has_value(char axis, float &value) const;
-        bool  has_value(char axis, int &value) const;
         // Parse value of an axis from raw string starting at axis_pos.
         static bool has_value(std::string_view axis_pos, float &value);
-        static bool has_value(std::string_view axis_pos, int &value);
         float new_X(const GCodeReader &reader) const { return this->has(X) ? this->x() : reader.x(); }
         float new_Y(const GCodeReader &reader) const { return this->has(Y) ? this->y() : reader.y(); }
         float new_Z(const GCodeReader &reader) const { return this->has(Z) ? this->z() : reader.z(); }
         float new_E(const GCodeReader &reader) const { return this->has(E) ? this->e() : reader.e(); }
         float new_F(const GCodeReader &reader) const { return this->has(F) ? this->f() : reader.f(); }
-        Point new_XY_scaled(const GCodeReader &reader) const 
-            { return Point::new_scale(this->new_X(reader), this->new_Y(reader)); }
         float dist_X(const GCodeReader &reader) const { return this->has(X) ? (this->x() - reader.x()) : 0; }
         float dist_Y(const GCodeReader &reader) const { return this->has(Y) ? (this->y() - reader.y()) : 0; }
         float dist_Z(const GCodeReader &reader) const { return this->has(Z) ? (this->z() - reader.z()) : 0; }
@@ -59,22 +50,32 @@ public:
             return sqrt(x*x + y*y);
         }
         bool cmd_is(const char *cmd_test)          const { return cmd_is(m_raw, cmd_test); }
-        bool extruding(const GCodeReader &reader)  const { return this->cmd_is("G1") && this->dist_E(reader) > 0; }
-        bool retracting(const GCodeReader &reader) const { return this->cmd_is("G1") && this->dist_E(reader) < 0; }
-        bool travel()     const { return this->cmd_is("G1") && ! this->has(E); }
-        void set(const GCodeReader &reader, const Axis axis, const float new_value, const int decimal_digits = 3);
+        //BBS: modify to support G2 and G3
+        bool extruding(const GCodeReader &reader)  const { return (this->cmd_is("G1") || this->cmd_is("G2") || this->cmd_is("G3")) && this->dist_E(reader) > 0; }
+        bool retracting(const GCodeReader &reader) const { return (this->cmd_is("G1") || this->cmd_is("G2") || this->cmd_is("G3")) && this->dist_E(reader) < 0; }
+        bool travel()     const { return (this->cmd_is("G1") || this->cmd_is("G2") || this->cmd_is("G3")) && ! this->has(E); }
+        void set(const Axis axis, const float new_value, const int decimal_digits = 3);
 
         bool  has_x() const { return this->has(X); }
         bool  has_y() const { return this->has(Y); }
         bool  has_z() const { return this->has(Z); }
         bool  has_e() const { return this->has(E); }
         bool  has_f() const { return this->has(F); }
+        // BBS: add I J P axis
+        bool  has_i() const { return this->has(I); }
+        bool  has_j() const { return this->has(J); }
+        bool  has_p() const { return this->has(P); }
+
         bool  has_unknown_axis() const { return this->has(UNKNOWN_AXIS); }
         float x() const { return m_axis[X]; }
         float y() const { return m_axis[Y]; }
         float z() const { return m_axis[Z]; }
         float e() const { return m_axis[E]; }
         float f() const { return m_axis[F]; }
+        // BBS: add I J P axis
+        float i() const { return m_axis[I]; }
+        float j() const { return m_axis[J]; }
+        float p() const { return m_axis[P]; }
 
         static bool cmd_is(const std::string &gcode_line, const char *cmd_test) {
             const char *cmd = GCodeReader::skip_whitespaces(gcode_line.c_str());
@@ -92,7 +93,6 @@ public:
             const std::string_view cmd = temp.cmd();
             return { cmd.begin(), cmd.end() };
         }
-
     private:
         std::string      m_raw;
         float            m_axis[NUM_AXES];
@@ -103,10 +103,11 @@ public:
     typedef std::function<void(GCodeReader&, const GCodeLine&)> callback_t;
     typedef std::function<void(GCodeReader&, const char*, const char*)> raw_line_callback_t;
     
-    GCodeReader() : m_verbose(false), m_extrusion_axis('E') { this->reset(); }
+    GCodeReader() : m_verbose(false) { this->reset(); }
     void reset() { memset(m_position, 0, sizeof(m_position)); }
     void apply_config(const GCodeConfig &config);
     void apply_config(const DynamicPrintConfig &config);
+    const GCodeConfig& config() { return m_config; };
 
     template<typename Callback>
     void parse_buffer(const std::string &buffer, Callback callback)
@@ -142,7 +143,7 @@ public:
     bool parse_file(const std::string &file, callback_t callback);
     // Collect positions of line ends in the binary G-code to be used by the G-code viewer when memory mapping and displaying section of G-code
     // as an overlay in the 3D scene.
-    bool parse_file(const std::string& file, callback_t callback, std::vector<std::vector<size_t>>& lines_ends);
+    bool parse_file(const std::string &file, callback_t callback, std::vector<size_t> &lines_ends);
     // Just read the G-code file line by line, calls callback (const char *begin, const char *end). Returns false if reading the file failed.
     bool parse_file_raw(const std::string &file, raw_line_callback_t callback);
 
@@ -159,14 +160,16 @@ public:
     float  e() const { return m_position[E]; }
     float& f()       { return m_position[F]; }
     float  f() const { return m_position[F]; }
-    Point  xy_scaled() const { return Point::new_scale(this->x(), this->y()); }
+    // BBS: add I J axis
+    float& i()       { return m_position[I]; }
+    float  i() const { return m_position[I]; }
+    float& j()       { return m_position[J]; }
+    float  j() const { return m_position[J]; }
 
-
-    // Returns 0 for gcfNoExtrusion.
-    char   extrusion_axis() const { return m_extrusion_axis; }
-//  void   set_extrusion_axis(char axis) { m_extrusion_axis = axis; }
-
-    void set_progress_callback(ProgressCallback cb) { m_progress_callback = cb; }
+    GCodeConfig get_config() const
+    { 
+        return m_config;
+    }
 
 private:
     template<typename ParseLineCallback, typename LineEndCallback>
@@ -194,13 +197,10 @@ private:
     static const char*  axis_pos(const char *raw_str, char axis);
 
     GCodeConfig m_config;
-    char        m_extrusion_axis;
     float       m_position[NUM_AXES];
     bool        m_verbose;
     // To be set by the callback to stop parsing.
     bool        m_parsing{ false };
-
-    ProgressCallback m_progress_callback{ nullptr };
 };
 
 } /* namespace Slic3r */

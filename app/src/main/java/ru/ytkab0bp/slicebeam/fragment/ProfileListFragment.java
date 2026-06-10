@@ -24,6 +24,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -59,6 +60,7 @@ import ru.ytkab0bp.slicebeam.config.ConfigObject;
 import ru.ytkab0bp.slicebeam.navigation.Fragment;
 import ru.ytkab0bp.slicebeam.recycler.CubicBezierItemAnimator;
 import ru.ytkab0bp.slicebeam.recycler.PreferenceItem;
+import ru.ytkab0bp.slicebeam.recycler.SpaceItem;
 import ru.ytkab0bp.slicebeam.recycler.PreferenceSwitchItem;
 import ru.ytkab0bp.slicebeam.recycler.SimpleRecyclerItem;
 import ru.ytkab0bp.slicebeam.slic3r.ConfigOptionDef;
@@ -72,6 +74,7 @@ import ru.ytkab0bp.slicebeam.utils.ViewUtils;
 import ru.ytkab0bp.slicebeam.view.BeamButton;
 import ru.ytkab0bp.slicebeam.view.DividerView;
 import ru.ytkab0bp.slicebeam.view.FadeRecyclerView;
+import ru.ytkab0bp.slicebeam.view.FilamentPaletteBar;
 import ru.ytkab0bp.slicebeam.view.ProfileDropdownView;
 
 public abstract class ProfileListFragment extends Fragment {
@@ -84,11 +87,37 @@ public abstract class ProfileListFragment extends Fragment {
     protected ImageView resetButton;
     protected BeamButton saveButton;
 
+    // Bound to the app-scoped live diff for this fragment's category, so unsaved edits persist across
+    // the fragment's lifecycle and are applied when slicing (see SliceBeam.buildCurrentConfigObject).
     protected ConfigObject diffObject = new ConfigObject();
+
+    /** The ConfigObject.PROFILE_LIST_* category this fragment edits, or -1 if it isn't a sliced profile. */
+    protected int getProfileListType() {
+        return -1;
+    }
 
     private List<OptionWrapper> currentList = Collections.emptyList();
     private SparseArray<List<OptionWrapper>> categoryElements = new SparseArray<>();
     private SparseBooleanArray unfolded = new SparseBooleanArray();
+
+    // Desktop-style horizontal category tabs (Quality | Strength | Speed | ...). When enabled, each
+    // category becomes its own page instead of a vertical collapsible section.
+    private HorizontalScrollView tabScroll;
+    private LinearLayout tabStrip;
+    private final List<OptionWrapper> tabTitles = new ArrayList<>();
+    private int selectedTab = 0;
+
+    /** Profile config screens override this to render categories as horizontal tabbed pages. */
+    protected boolean useTabs() {
+        return false;
+    }
+
+    /** The print screen overrides this to show the multi-color filament palette bar under the preset dropdown. */
+    protected boolean showFilamentPalette() {
+        return false;
+    }
+
+    protected FilamentPaletteBar filamentPaletteBar;
 
     @Override
     public View onCreateView(Context ctx) {
@@ -114,6 +143,8 @@ public abstract class ProfileListFragment extends Fragment {
                     .setTitle(getTitle())
                     .setSingleChoiceItems(titles, selected, (dialog, which) -> {
                         dropdownView.setTitle(items.get(which).getTitle());
+                        // Switching presets discards unsaved edits, which belonged to the previous one.
+                        diffObject.values.clear();
                         selectItem(items.get(which));
                         onUpdateConfigItems();
                         dialog.dismiss();
@@ -137,6 +168,27 @@ public abstract class ProfileListFragment extends Fragment {
             leftMargin = rightMargin = ViewUtils.dp(12);
             bottomMargin = ViewUtils.dp(8);
         }});
+
+        if (showFilamentPalette()) {
+            filamentPaletteBar = new FilamentPaletteBar(ctx);
+            ll.addView(filamentPaletteBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(70)) {{
+                leftMargin = rightMargin = 0;
+                bottomMargin = ViewUtils.dp(4);
+            }});
+        }
+
+        if (useTabs()) {
+            tabScroll = new HorizontalScrollView(ctx);
+            tabScroll.setHorizontalScrollBarEnabled(false);
+            tabScroll.setClipToPadding(false);
+            tabScroll.setPadding(ViewUtils.dp(12), 0, ViewUtils.dp(12), 0);
+            tabStrip = new LinearLayout(ctx);
+            tabStrip.setOrientation(LinearLayout.HORIZONTAL);
+            tabScroll.addView(tabStrip, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            ll.addView(tabScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(40)) {{
+                bottomMargin = ViewUtils.dp(4);
+            }});
+        }
         recyclerView = new FadeRecyclerView(ctx) {
             private Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -507,6 +559,9 @@ public abstract class ProfileListFragment extends Fragment {
     @Override
     public void onCreate() {
         super.onCreate();
+        // Use the persistent, app-scoped diff for this category so unsaved edits survive navigation
+        // and feed into slicing.
+        diffObject = SliceBeam.liveDiffFor(getProfileListType());
         SliceBeam.EVENT_BUS.registerListener(this);
     }
 
@@ -539,8 +594,64 @@ public abstract class ProfileListFragment extends Fragment {
                 categoryElements.get(j - 1).add(w);
             }
         }
+
+        if (useTabs()) {
+            tabTitles.clear();
+            tabTitles.addAll(list);
+            if (selectedTab >= tabTitles.size()) selectedTab = 0;
+            buildTabs();
+            currentList = tabTitles.isEmpty() ? new ArrayList<>() : new ArrayList<>(categoryElements.get(selectedTab));
+            recyclerView.getAdapter().notifyDataSetChanged();
+            return;
+        }
+
         currentList = list;
         recyclerView.getAdapter().notifyDataSetChanged();
+    }
+
+    private void buildTabs() {
+        if (tabStrip == null) return;
+        tabStrip.removeAllViews();
+        for (int i = 0; i < tabTitles.size(); i++) {
+            OptionWrapper w = tabTitles.get(i);
+            final int index = i;
+            TextView tab = new TextView(tabStrip.getContext());
+            tab.setText(Slic3rLocalization.getString(w.title));
+            tab.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+            tab.setGravity(Gravity.CENTER);
+            tab.setPadding(ViewUtils.dp(10), ViewUtils.dp(6), ViewUtils.dp(10), ViewUtils.dp(6));
+            tab.setOnClickListener(v -> selectTab(index));
+            tabStrip.addView(tab, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT) {{
+                rightMargin = ViewUtils.dp(4);
+            }});
+        }
+        styleTabs();
+    }
+
+    private void styleTabs() {
+        if (tabStrip == null) return;
+        int accent = ThemesRepo.getColor(android.R.attr.colorAccent);
+        int secondary = ThemesRepo.getColor(android.R.attr.textColorSecondary);
+        for (int i = 0; i < tabStrip.getChildCount(); i++) {
+            TextView tab = (TextView) tabStrip.getChildAt(i);
+            boolean sel = i == selectedTab;
+            tab.setTextColor(sel ? accent : secondary);
+            tab.setTypeface(sel ? ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM) : null);
+        }
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    private void selectTab(int index) {
+        if (index < 0 || index >= tabTitles.size()) return;
+        selectedTab = index;
+        styleTabs();
+        currentList = new ArrayList<>(categoryElements.get(index));
+        recyclerView.getAdapter().notifyDataSetChanged();
+        recyclerView.scrollToPosition(0);
+        TextView tab = (TextView) tabStrip.getChildAt(index);
+        if (tab != null && tabScroll != null) {
+            tabScroll.smoothScrollTo(tab.getLeft() - ViewUtils.dp(40), 0);
+        }
     }
 
     @Override
@@ -641,6 +752,13 @@ public abstract class ProfileListFragment extends Fragment {
         }
 
         public OptionElement(ConfigOptionDef def, int eIndex) {
+            if (def == null) {
+                // The requested option key is not present in the engine's PrintConfigDef (e.g. an
+                // option renamed/removed in the OrcaSlicer engine that the UI hasn't migrated yet).
+                // Render an invisible placeholder instead of crashing the whole config screen.
+                simpleItem = new SpaceItem(0, 0);
+                return;
+            }
             if (def.type != ConfigOptionDef.ConfigOptionType.BOOL && def.type != ConfigOptionDef.ConfigOptionType.BOOLS) {
                 simpleItem = new PreferenceItem().setTitle(Slic3rLocalization.getString(def.getLabel())).setOnClickListener(v -> {
                     if (def.guiType == ConfigOptionDef.GUIType.COLOR) {

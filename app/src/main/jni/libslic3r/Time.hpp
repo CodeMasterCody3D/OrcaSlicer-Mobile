@@ -1,7 +1,3 @@
-///|/ Copyright (c) Prusa Research 2019 Tomáš Mészáros @tamasmeszaros
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_Utils_Time_hpp_
 #define slic3r_Utils_Time_hpp_
 
@@ -36,6 +32,10 @@ inline std::string utc_timestamp()
     return utc_timestamp(get_current_time_utc());
 }
 
+inline std::string local_timestamp(TimeFormat fmt = TimeFormat::gcode) {
+     return time2str(get_current_time_utc(), TimeZone::local, fmt);
+}
+
 // String to time_t function. Returns time_t(-1) if fails to parse the input.
 time_t str2time(const std::string &str, TimeZone zone, TimeFormat fmt);
 
@@ -62,6 +62,15 @@ inline time_t parse_iso_utc_timestamp(const std::string &str)
 {
     return str2time(str, TimeZone::utc, TimeFormat::iso8601Z);
 }
+
+// /////////////////////////////////////////////////////////////////////////////
+// Millisecond timestamps for cloud sync protocol
+// Format: "2025-11-28T14:30:00.123Z" (ISO 8601 with milliseconds)
+
+// Lossless conversion: Unix milliseconds <-> ISO 8601
+// Format: "YYYY-MM-DDTHH:MM:SS.sssZ" (always 3 decimal places for milliseconds)
+std::string millis_to_iso8601(long long unix_millis);
+long long iso8601_to_millis(const std::string& iso_time);  // Returns -1 on parse error
 
 // /////////////////////////////////////////////////////////////////////////////
 

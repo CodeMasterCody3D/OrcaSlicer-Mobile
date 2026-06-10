@@ -1,15 +1,3 @@
-///|/ Copyright (c) Prusa Research 2016 - 2023 Tomáš Mészáros @tamasmeszaros, Oleksandra Iushchenko @YuSanka, Enrico Turri @enricoturri1966, Lukáš Matěna @lukasmatena, Vojtěch Bubník @bubnikv, Filip Sykala @Jony01, Lukáš Hejl @hejllukas, David Kocík @kocikdav, Vojtěch Král @vojtechkral
-///|/ Copyright (c) 2019 John Drake @foxox
-///|/ Copyright (c) 2019 Sijmen Schoon
-///|/ Copyright (c) 2017 Eyal Soha @eyal0
-///|/ Copyright (c) Slic3r 2014 - 2015 Alessandro Ranellucci @alranel
-///|/
-///|/ ported from lib/Slic3r/Model.pm:
-///|/ Copyright (c) Prusa Research 2016 - 2022 Vojtěch Bubník @bubnikv, Enrico Turri @enricoturri1966
-///|/ Copyright (c) Slic3r 2012 - 2016 Alessandro Ranellucci @alranel
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #ifndef slic3r_Model_hpp_
 #define slic3r_Model_hpp_
 
@@ -18,22 +6,35 @@
 #include "Geometry.hpp"
 #include "ObjectID.hpp"
 #include "Point.hpp"
+#include "AppConfig.hpp"
 #include "PrintConfig.hpp"
 #include "Slicing.hpp"
 #include "SLA/SupportPoint.hpp"
 #include "SLA/Hollowing.hpp"
+#include "BrimEarsPoint.hpp"
 #include "TriangleMesh.hpp"
 #include "CustomGCode.hpp"
+#include "calib.hpp"
 #include "enum_bitmask.hpp"
 #include "TextConfiguration.hpp"
 #include "EmbossShape.hpp"
 #include "TriangleSelector.hpp"
+
+//BBS: add bbs 3mf
+#include "Format/bbs_3mf.hpp"
+//BBS: add step
+#include "Format/STEP.hpp"
+//BBS: add stl
+#include "Format/STL.hpp"
+#include "Format/OBJ.hpp"
 
 #include <map>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+#include <algorithm>
+#include <functional>
 #include <optional>
 
 namespace cereal {
@@ -57,6 +58,12 @@ class ModelVolume;
 class ModelWipeTower;
 class Print;
 class SLAPrint;
+class TriangleSelector;
+//BBS: add Preset
+class Preset;
+class BBLProject;
+
+class KeyStore;
 
 namespace UndoRedo {
 	class StackImpl;
@@ -180,8 +187,8 @@ private:
 	friend class cereal::access;
 	friend class UndoRedo::StackImpl;
 	// Create an object for deserialization, don't allocate IDs for ModelMaterial and its config.
-	ModelMaterial() : ObjectBase(-1), config(-1) { assert(this->id().invalid()); assert(this->config.id().invalid()); }
-	template<class Archive> void serialize(Archive &ar) { 
+	ModelMaterial() : ObjectBase(-1), config(-1), m_model(nullptr) { assert(this->id().invalid()); assert(this->config.id().invalid()); }
+	template<class Archive> void serialize(Archive &ar) {
 		assert(this->id().invalid()); assert(this->config.id().invalid());
 		Internal::StaticSerializationWrapper<ModelConfigObject> config_wrapper(config);
 		ar(attributes, config_wrapper);
@@ -200,7 +207,7 @@ public:
     void assign(const LayerHeightProfile &rhs) { if (! this->timestamp_matches(rhs)) { m_data = rhs.m_data; this->copy_timestamp(rhs); } }
     void assign(LayerHeightProfile &&rhs) { if (! this->timestamp_matches(rhs)) { m_data = std::move(rhs.m_data); this->copy_timestamp(rhs); } }
 
-    const std::vector<coordf_t>& get() const throw() { return m_data; }
+    std::vector<coordf_t> get() const throw() { return m_data; }
     bool                  empty() const throw() { return m_data.empty(); }
     void                  set(const std::vector<coordf_t> &data) { if (m_data != data) { m_data = data; this->touch(); } }
     void                  set(std::vector<coordf_t> &&data) { if (m_data != data) { m_data = std::move(data); this->touch(); } }
@@ -233,6 +240,11 @@ private:
     friend class ModelObject;
 };
 
+enum class CutMode : int {
+    cutPlanar,
+    cutTongueAndGroove
+};
+
 enum class CutConnectorType : int {
     Plug
     , Dowel
@@ -254,6 +266,11 @@ enum class CutConnectorShape : int {
     , Circle
     , Undef
     //,D-shape
+};
+struct CutConnectorParas
+{
+    float snap_space_proportion{0.3};
+    float snap_bulge_proportion{0.15};
 };
 
 struct CutConnectorAttributes
@@ -338,6 +355,8 @@ class ModelObject final : public ObjectBase
 {
 public:
     std::string             name;
+    //BBS: add module name for assemble
+    std::string             module_name;
     std::string             input_file;    // XXX: consider fs::path
     // Instances of this ModelObject. Each instance defines a shift on the print bed, rotation around the Z axis and a uniform scaling.
     // Instances are owned by this ModelObject.
@@ -366,9 +385,7 @@ public:
     // Holes to be drilled into the object so resin can flow out
     sla::DrainHoles         sla_drain_holes;
 
-    // Connectors to be added into the object before cut and are used to create a solid/negative volumes during a cut perform
-    CutConnectors           cut_connectors;
-    CutObjectBase           cut_id;
+    BrimPoints              brim_points;
 
     /* This vector accumulates the total translation applied to the object by the
         center_around_origin() method. Callers might want to apply the same translation
@@ -376,13 +393,29 @@ public:
         when user expects that. */
     Vec3d                   origin_translation;
 
+    // BBS: save for compare with new load volumes
+    std::vector<ObjectID>   volume_ids;
+
+    // Connectors to be added into the object before cut and are used to create a solid/negative volumes during a cut perform
+    CutConnectors cut_connectors;
+    CutObjectBase cut_id;
+
     Model*                  get_model() { return m_model; }
     const Model*            get_model() const { return m_model; }
+    // BBS: production extension
+    int                     get_backup_id() const;
+    template<typename T> const T* get_config_value(const DynamicPrintConfig& global_config, const std::string& config_option) {
+        if (config.has(config_option))
+            return static_cast<const T*>(config.option(config_option));
+        else
+            return global_config.option<T>(config_option);
+    }
 
-    ModelVolume*            add_volume(const TriangleMesh &mesh);
-    ModelVolume*            add_volume(TriangleMesh &&mesh, ModelVolumeType type = ModelVolumeType::MODEL_PART);
+    ModelVolume*            add_volume(const TriangleMesh &mesh, bool modify_to_center_geometry = true);
+    ModelVolume*            add_volume(TriangleMesh &&mesh, ModelVolumeType type = ModelVolumeType::MODEL_PART, bool modify_to_center_geometry = true);
     ModelVolume*            add_volume(const ModelVolume &volume, ModelVolumeType type = ModelVolumeType::INVALID);
     ModelVolume*            add_volume(const ModelVolume &volume, TriangleMesh &&mesh);
+    ModelVolume*            add_volume_with_shared_mesh(const ModelVolume &other, ModelVolumeType type = ModelVolumeType::MODEL_PART);
     void                    delete_volume(size_t idx);
     void                    clear_volumes();
     void                    sort_volumes(bool full_sort);
@@ -393,16 +426,16 @@ public:
     bool                    is_seam_painted() const;
     // Checks if any of object volume is painted using the multi-material painting gizmo.
     bool                    is_mm_painted() const;
-    // Checks if object contains just one volume and it's a text
-    bool                    is_text() const;
+    // Checks if any of object volume is painted using the fuzzy skin painting gizmo.
+    bool                    is_fuzzy_skin_painted() const;
     // This object may have a varying layer height by painting or by a table.
     // Even if true is returned, the layer height profile may be "flat" with no difference to default layering.
-    bool                    has_custom_layering() const 
+    bool                    has_custom_layering() const
         { return ! this->layer_config_ranges.empty() || ! this->layer_height_profile.empty(); }
 
     ModelInstance*          add_instance();
     ModelInstance*          add_instance(const ModelInstance &instance);
-    ModelInstance*          add_instance(const Geometry::Transformation& trafo);
+    ModelInstance*          add_instance(const Vec3d &offset, const Vec3d &scaling_factor, const Vec3d &rotation, const Vec3d &mirror);
     void                    delete_instance(size_t idx);
     void                    delete_last_instance();
     void                    clear_instances();
@@ -416,7 +449,7 @@ public:
     double                  min_z() const;
     double                  max_z() const;
 
-    void invalidate_bounding_box() { 
+    void invalidate_bounding_box() {
         m_bounding_box_approx_valid     = false;
         m_bounding_box_exact_valid      = false;
         m_min_max_z_valid               = false;
@@ -436,10 +469,16 @@ public:
     const BoundingBoxf3& raw_bounding_box() const;
     // A snug bounding box around the transformed non-modifier object volumes.
     BoundingBoxf3 instance_bounding_box(size_t instance_idx, bool dont_translate = false) const;
+    BoundingBoxf3 instance_bounding_box(const ModelInstance& instance, bool dont_translate = false) const;
+
 	// A snug bounding box of non-transformed (non-rotated, non-scaled, non-translated) sum of non-modifier object volumes.
 	const BoundingBoxf3& raw_mesh_bounding_box() const;
 	// A snug bounding box of non-transformed (non-rotated, non-scaled, non-translated) sum of all object volumes.
     BoundingBoxf3 full_raw_mesh_bounding_box() const;
+
+    //BBS: add instance convex hull bounding box
+    BoundingBoxf3 instance_convex_hull_bounding_box(size_t instance_idx, bool dont_translate = false) const;
+    BoundingBoxf3 instance_convex_hull_bounding_box(const ModelInstance* instance, bool dont_translate = false) const;
 
     // Calculate 2D convex hull of of a projection of the transformed printable volumes into the XY plane.
     // This method is cheap in that it does not make any unnecessary copy of the volume meshes.
@@ -477,8 +516,13 @@ public:
     void delete_connectors();
     void clone_for_cut(ModelObject **obj);
 
-    void split(ModelObjectPtrs*new_objects);
+    void split(ModelObjectPtrs*new_objects, bool remap_paint);
     void merge();
+
+    // BBS: Boolean opts - Musang King
+    bool make_boolean(ModelObject *cut_object, const std::string &boolean_opts);
+
+    ModelObjectPtrs merge_volumes(std::vector<int>& vol_indeces);//BBS
     // Support for non-uniform scaling of instances. If an instance is rotated by angles, which are not multiples of ninety degrees,
     // then the scaling in world coordinate system is not representable by the Geometry::Transformation structure.
     // This situation is solved by baking in the instance transformation into the mesh vertices.
@@ -500,25 +544,20 @@ public:
 
     // Detect if object has at least one solid mash
     bool has_solid_mesh() const;
-    // Detect if object has at least one negative volume mash
-    bool has_negative_volume_mesh() const;
-    // Detect if object has at least one sla drain hole
-    bool has_sla_drain_holes() const { return !sla_drain_holes.empty(); }
     bool is_cut() const { return cut_id.id().valid(); }
     bool has_connectors() const;
-
 private:
     friend class Model;
     // This constructor assigns new ID to this ModelObject and its config.
     explicit ModelObject(Model* model) : m_model(model), origin_translation(Vec3d::Zero())
-    { 
+    {
         assert(this->id().valid());
         assert(this->config.id().valid());
         assert(this->layer_height_profile.id().valid());
     }
     explicit ModelObject(int) : ObjectBase(-1), config(-1), layer_height_profile(-1), origin_translation(Vec3d::Zero())
-    { 
-        assert(this->id().invalid()); 
+    {
+        assert(this->id().invalid());
         assert(this->config.id().invalid());
         assert(this->layer_height_profile.id().invalid());
     }
@@ -527,25 +566,25 @@ private:
 
     // To be able to return an object from own copy / clone methods. Hopefully the compiler will do the "Copy elision"
     // (Omits copy and move(since C++11) constructors, resulting in zero - copy pass - by - value semantics).
-    ModelObject(const ModelObject &rhs) : ObjectBase(-1), config(-1), layer_height_profile(-1), m_model(rhs.m_model) { 
-    	assert(this->id().invalid()); 
-        assert(this->config.id().invalid()); 
+    ModelObject(const ModelObject &rhs) : ObjectBase(-1), config(-1), layer_height_profile(-1), m_model(rhs.m_model) {
+    	assert(this->id().invalid());
+        assert(this->config.id().invalid());
         assert(this->layer_height_profile.id().invalid());
         assert(rhs.id() != rhs.config.id());
         assert(rhs.id() != rhs.layer_height_profile.id());
     	this->assign_copy(rhs);
-    	assert(this->id().valid()); 
-        assert(this->config.id().valid()); 
-        assert(this->layer_height_profile.id().valid()); 
+    	assert(this->id().valid());
+        assert(this->config.id().valid());
+        assert(this->layer_height_profile.id().valid());
         assert(this->id() != this->config.id());
         assert(this->id() != this->layer_height_profile.id());
-    	assert(this->id() == rhs.id()); 
+    	assert(this->id() == rhs.id());
         assert(this->config.id() == rhs.config.id());
         assert(this->layer_height_profile.id() == rhs.layer_height_profile.id());
     }
-    explicit ModelObject(ModelObject &&rhs) : ObjectBase(-1), config(-1), layer_height_profile(-1) { 
-    	assert(this->id().invalid()); 
-        assert(this->config.id().invalid()); 
+    explicit ModelObject(ModelObject &&rhs) : ObjectBase(-1), config(-1), layer_height_profile(-1) {
+    	assert(this->id().invalid());
+        assert(this->config.id().invalid());
         assert(this->layer_height_profile.id().invalid());
         assert(rhs.id() != rhs.config.id());
         assert(rhs.id() != rhs.layer_height_profile.id());
@@ -560,22 +599,9 @@ private:
         assert(this->layer_height_profile.id() == rhs.layer_height_profile.id());
     }
     ModelObject& operator=(const ModelObject &rhs) {
-    	this->assign_copy(rhs); 
+    	this->assign_copy(rhs);
     	m_model = rhs.m_model;
-    	assert(this->id().valid()); 
-        assert(this->config.id().valid()); 
-        assert(this->layer_height_profile.id().valid());
-        assert(this->id() != this->config.id());
-        assert(this->id() != this->layer_height_profile.id());
-    	assert(this->id() == rhs.id()); 
-        assert(this->config.id() == rhs.config.id());
-        assert(this->layer_height_profile.id() == rhs.layer_height_profile.id());
-    	return *this;
-    }
-    ModelObject& operator=(ModelObject &&rhs) {
-    	this->assign_copy(std::move(rhs)); 
-    	m_model = rhs.m_model;
-    	assert(this->id().valid()); 
+    	assert(this->id().valid());
         assert(this->config.id().valid());
         assert(this->layer_height_profile.id().valid());
         assert(this->id() != this->config.id());
@@ -585,8 +611,21 @@ private:
         assert(this->layer_height_profile.id() == rhs.layer_height_profile.id());
     	return *this;
     }
-	void set_new_unique_id() { 
-        ObjectBase::set_new_unique_id(); 
+    ModelObject& operator=(ModelObject &&rhs) {
+    	this->assign_copy(std::move(rhs));
+    	m_model = rhs.m_model;
+    	assert(this->id().valid());
+        assert(this->config.id().valid());
+        assert(this->layer_height_profile.id().valid());
+        assert(this->id() != this->config.id());
+        assert(this->id() != this->layer_height_profile.id());
+    	assert(this->id() == rhs.id());
+        assert(this->config.id() == rhs.config.id());
+        assert(this->layer_height_profile.id() == rhs.layer_height_profile.id());
+    	return *this;
+    }
+	void set_new_unique_id() {
+        ObjectBase::set_new_unique_id();
         this->config.set_new_unique_id();
         this->layer_height_profile.set_new_unique_id();
     }
@@ -629,23 +668,41 @@ private:
 	friend class cereal::access;
 	friend class UndoRedo::StackImpl;
 	// Used for deserialization -> Don't allocate any IDs for the ModelObject or its config.
-	ModelObject() : 
+	ModelObject() :
         ObjectBase(-1), config(-1), layer_height_profile(-1) {
-		assert(this->id().invalid()); 
+		assert(this->id().invalid());
         assert(this->config.id().invalid());
         assert(this->layer_height_profile.id().invalid());
 	}
-	template<class Archive> void serialize(Archive &ar) {
-		ar(cereal::base_class<ObjectBase>(this));
-		Internal::StaticSerializationWrapper<ModelConfigObject> config_wrapper(config);
-        Internal::StaticSerializationWrapper<LayerHeightProfile> layer_heigth_profile_wrapper(layer_height_profile);
-        ar(name, input_file, instances, volumes, config_wrapper, layer_config_ranges, layer_heigth_profile_wrapper, 
-            sla_support_points, sla_points_status, sla_drain_holes, printable, origin_translation,
+    template<class Archive> void save(Archive& ar) const {
+        ar(cereal::base_class<ObjectBase>(this));
+        Internal::StaticSerializationWrapper<ModelConfigObject const> config_wrapper(config);
+        Internal::StaticSerializationWrapper<LayerHeightProfile const> layer_heigth_profile_wrapper(layer_height_profile);
+        ar(name, module_name, input_file, instances, volumes, config_wrapper, layer_config_ranges, layer_heigth_profile_wrapper,
+            sla_support_points, sla_points_status, sla_drain_holes, printable, origin_translation, brim_points,
             m_bounding_box_approx, m_bounding_box_approx_valid, 
             m_bounding_box_exact, m_bounding_box_exact_valid, m_min_max_z_valid,
             m_raw_bounding_box, m_raw_bounding_box_valid, m_raw_mesh_bounding_box, m_raw_mesh_bounding_box_valid,
             cut_connectors, cut_id);
-	}
+    }
+    template<class Archive> void load(Archive& ar) {
+        ar(cereal::base_class<ObjectBase>(this));
+        Internal::StaticSerializationWrapper<ModelConfigObject> config_wrapper(config);
+        Internal::StaticSerializationWrapper<LayerHeightProfile> layer_heigth_profile_wrapper(layer_height_profile);
+        // BBS: add backup, check modify
+        SaveObjectGaurd gaurd(*this);
+        ar(name, module_name, input_file, instances, volumes, config_wrapper, layer_config_ranges, layer_heigth_profile_wrapper,
+            sla_support_points, sla_points_status, sla_drain_holes, printable, origin_translation, brim_points,
+            m_bounding_box_approx, m_bounding_box_approx_valid, 
+            m_bounding_box_exact, m_bounding_box_exact_valid, m_min_max_z_valid,
+            m_raw_bounding_box, m_raw_bounding_box_valid, m_raw_mesh_bounding_box, m_raw_mesh_bounding_box_valid,
+            cut_connectors, cut_id);
+        std::vector<ObjectID> volume_ids2;
+        std::transform(volumes.begin(), volumes.end(), std::back_inserter(volume_ids2), std::mem_fn(&ObjectBase::id));
+        if (volume_ids != volume_ids2)
+            Slic3r::save_object_mesh(*this);
+        volume_ids.clear();
+    }
 
     // Called by Print::validate() from the UI thread.
     unsigned int update_instances_print_volume_state(const BuildVolume &build_volume);
@@ -661,16 +718,30 @@ enum class ConversionType : int {
     CONV_FROM_METER,
 };
 
+enum class En3mfType : int {
+    From_Orca,
+    From_BBS,
+    From_Prusa,
+    From_Other
+};
+
 class FacetsAnnotation final : public ObjectWithTimestamp {
 public:
     // Assign the content if the timestamp differs, don't assign an ObjectID.
     void assign(const FacetsAnnotation &rhs) { if (! this->timestamp_matches(rhs)) { m_data = rhs.m_data; this->copy_timestamp(rhs); } }
     void assign(FacetsAnnotation &&rhs) { if (! this->timestamp_matches(rhs)) { m_data = std::move(rhs.m_data); this->copy_timestamp(rhs); } }
     const TriangleSelector::TriangleSplittingData &get_data() const noexcept { return m_data; }
+    void set_data(TriangleSelector::TriangleSplittingData &&data) { m_data = std::move(data); this->touch(); }
     bool set(const TriangleSelector& selector);
-    indexed_triangle_set get_facets(const ModelVolume& mv, TriangleStateType type) const;
-    indexed_triangle_set get_facets_strict(const ModelVolume& mv, TriangleStateType type) const;
-    bool has_facets(const ModelVolume& mv, TriangleStateType type) const;
+    indexed_triangle_set get_facets(const ModelVolume& mv, EnforcerBlockerType type) const;
+    // BBS
+    void get_facets(const ModelVolume& mv, std::vector<indexed_triangle_set>& facets_per_type) const;
+    void                 set_enforcer_block_type_limit(const ModelVolume  &mv,
+                                                       EnforcerBlockerType max_type,
+                                                       EnforcerBlockerType to_delete_filament = EnforcerBlockerType::NONE,
+                                                       EnforcerBlockerType replace_filament = EnforcerBlockerType::NONE);
+    indexed_triangle_set get_facets_strict(const ModelVolume& mv, EnforcerBlockerType type) const;
+    bool has_facets(const ModelVolume& mv, EnforcerBlockerType type) const;
     bool empty() const { return m_data.triangles_to_split.empty(); }
 
     // Following method clears the config and increases its timestamp, so the deleted
@@ -686,6 +757,7 @@ public:
     void set_triangle_from_string(int triangle_id, const std::string& str);
     // After deserializing the last triangle, shrink data to fit.
     void shrink_to_fit() { m_data.triangles_to_split.shrink_to_fit(); m_data.bitstream.shrink_to_fit(); }
+    bool equals(const FacetsAnnotation &other) const;
 
 private:
     // Constructors to be only called by derived classes.
@@ -695,9 +767,9 @@ private:
     // by an existing ID copied from elsewhere.
     explicit FacetsAnnotation(int) : ObjectWithTimestamp(-1) {}
     // Copy constructor copies the ID.
-    FacetsAnnotation(const FacetsAnnotation &rhs) = default;
+    explicit FacetsAnnotation(const FacetsAnnotation &rhs) = default;
     // Move constructor copies the ID.
-    FacetsAnnotation(FacetsAnnotation &&rhs) = default;
+    explicit FacetsAnnotation(FacetsAnnotation &&rhs) = default;
 
     // called by ModelVolume::assign_copy()
     FacetsAnnotation& operator=(const FacetsAnnotation &rhs) = default;
@@ -706,7 +778,10 @@ private:
     friend class cereal::access;
     friend class UndoRedo::StackImpl;
 
-    template<class Archive> void serialize(Archive &ar) { ar(cereal::base_class<ObjectWithTimestamp>(this), m_data); }
+    template<class Archive> void serialize(Archive &ar)
+    {
+        ar(cereal::base_class<ObjectWithTimestamp>(this), m_data);
+    }
 
     TriangleSelector::TriangleSplittingData m_data;
 
@@ -797,8 +872,23 @@ public:
     // List of seam enforcers/blockers.
     FacetsAnnotation    seam_facets;
 
-    // List of mesh facets painted for MM segmentation.
-    FacetsAnnotation    mm_segmentation_facets;
+    // List of mesh facets painted for MMU segmentation.
+    FacetsAnnotation    mmu_segmentation_facets;
+
+    // List of mesh facets painted for fuzzy skin.
+    FacetsAnnotation    fuzzy_skin_facets;
+
+    // Save painting data before reset_extra_facets() discards it.
+    // Used for replacing mesh without losing painting data.
+    // Only for model parts (not modifiers/connectors).
+    std::optional<TriangleSelector::SavedPainting> save_painting() const;
+    
+    // Remap painting data from previous saved source to this mesh
+    void restore_painting(const std::optional<TriangleSelector::SavedPainting>& saved, bool keep_existing_paint = false);
+
+    // BBS: quick access for volume extruders, 1 based
+    mutable std::vector<int> mmuseg_extruders;
+    mutable Timestamp        mmuseg_ts;
 
     // Is set only when volume is Embossed Text type
     // Contain information how to re-create volume
@@ -822,8 +912,8 @@ public:
     bool                is_svg() const { return emboss_shape.has_value()  && !text_configuration.has_value(); }
     bool                is_the_only_one_part() const; // behave like an object
     t_model_material_id material_id() const { return m_material_id; }
-    void                reset_extra_facets();
     void                set_material_id(t_model_material_id material_id);
+    void                reset_extra_facets();
     ModelMaterial*      material() const;
     void                set_material(t_model_material_id material_id, const ModelMaterial &material);
     // Extract the current extruder ID based on this ModelVolume's config and the parent ModelObject's config.
@@ -832,10 +922,15 @@ public:
 
     bool                is_splittable() const;
 
+    // BBS
+    std::vector<int>    get_extruders() const;
+    void                update_extruder_count(size_t extruder_count);
+    void                update_extruder_count_when_delete_filament(size_t extruder_count, size_t filament_id, int replace_filament_id = -1);
+
     // Split this volume, append the result to the object owning this volume.
     // Return the number of volumes created from this one.
     // This is useful to assign different materials to different volumes of an object.
-    size_t              split(unsigned int max_extruders);
+    size_t              split(unsigned int max_extruders, bool remap_paint);
     void                translate(double x, double y, double z) { translate(Vec3d(x, y, z)); }
     void                translate(const Vec3d& displacement);
     void                scale(const Vec3d& scaling_factors);
@@ -856,6 +951,13 @@ public:
     void                calculate_convex_hull();
     const TriangleMesh& get_convex_hull() const;
     const std::shared_ptr<const TriangleMesh>& get_convex_hull_shared_ptr() const { return m_convex_hull; }
+    //BBS: add convex_hell_2d related logic
+    const Polygon& get_convex_hull_2d(const Transform3d &trafo_instance) const;
+    void invalidate_convex_hull_2d()
+    {
+        m_convex_hull_2d.clear();
+    }
+
     // Get count of errors in the mesh
     int                 get_repaired_errors_count() const;
 
@@ -898,25 +1000,24 @@ public:
     const Transform3d& get_matrix() const { return m_transformation.get_matrix(); }
     Transform3d get_matrix_no_offset() const { return m_transformation.get_matrix_no_offset(); }
 
-	void set_new_unique_id() { 
+	void set_new_unique_id() {
         ObjectBase::set_new_unique_id();
         this->config.set_new_unique_id();
         this->supported_facets.set_new_unique_id();
         this->seam_facets.set_new_unique_id();
-        this->mm_segmentation_facets.set_new_unique_id();
+        this->mmu_segmentation_facets.set_new_unique_id();
+        this->fuzzy_skin_facets.set_new_unique_id();
     }
 
     bool is_fdm_support_painted() const { return !this->supported_facets.empty(); }
     bool is_seam_painted() const { return !this->seam_facets.empty(); }
-    bool is_mm_painted() const { return !this->mm_segmentation_facets.empty(); }
-
+    bool is_mm_painted() const { return !this->mmu_segmentation_facets.empty(); }
+    bool is_fuzzy_skin_painted() const { return !this->fuzzy_skin_facets.empty(); }
+    bool is_any_painted() const { return is_fdm_support_painted() || is_seam_painted() || is_mm_painted() || is_fuzzy_skin_painted(); }
+    
+    // Orca: Implement prusa's filament shrink compensation approach
     // Returns 0-based indices of extruders painted by multi-material painting gizmo.
-    std::vector<size_t> get_extruders_from_multi_material_painting() const;
-
-    static size_t get_extruder_color_idx(const ModelVolume& model_volume, const int extruders_count) {
-        const int extruder_id = model_volume.extruder_id();
-        return (extruder_id <= 0 || extruder_id > extruders_count) ? 0 : extruder_id - 1;
-    }
+     std::vector<size_t> get_extruders_from_multi_material_painting() const;
 
 protected:
 	friend class Print;
@@ -942,7 +1043,14 @@ private:
     t_model_material_id             	m_material_id;
     // The convex hull of this model's mesh.
     std::shared_ptr<const TriangleMesh> m_convex_hull;
+    //BBS: add convex hull 2d related logic
+    mutable Polygon                     m_convex_hull_2d; //BBS, used for convex_hell_2d acceleration
+    mutable Transform3d                 m_cached_trans_matrix; //BBS, used for convex_hell_2d acceleration
+    mutable Polygon                     m_cached_2d_polygon;   //BBS, used for convex_hell_2d acceleration
     Geometry::Transformation        	m_transformation;
+
+    //BBS: add convex_hell_2d related logic
+    void  calculate_convex_hull_2d(const Geometry::Transformation &transformation) const;
 
     // flag to optimize the checking if the volume is splittable
     //     -1   ->   is unknown value (before first cheking)
@@ -950,34 +1058,49 @@ private:
     //      1   ->   is splittable
     mutable int               		m_is_splittable{ -1 };
 
-    inline bool check() {
-        assert(this->id().valid());
+	ModelVolume(ModelObject *object, const TriangleMesh &mesh, ModelVolumeType type = ModelVolumeType::MODEL_PART) : m_mesh(new TriangleMesh(mesh)), m_type(type), object(object)
+    {
+		assert(this->id().valid());
         assert(this->config.id().valid());
         assert(this->supported_facets.id().valid());
         assert(this->seam_facets.id().valid());
-        assert(this->mm_segmentation_facets.id().valid());
+        assert(this->mmu_segmentation_facets.id().valid());
+        assert(this->fuzzy_skin_facets.id().valid());
         assert(this->id() != this->config.id());
         assert(this->id() != this->supported_facets.id());
         assert(this->id() != this->seam_facets.id());
-        assert(this->id() != this->mm_segmentation_facets.id());
-        return true;
+        assert(this->id() != this->mmu_segmentation_facets.id());
+        assert(this->id() != this->fuzzy_skin_facets.id());
+        if (mesh.facets_count() > 1)
+            calculate_convex_hull();
     }
-
-	ModelVolume(ModelObject *object, const TriangleMesh &mesh, ModelVolumeType type = ModelVolumeType::MODEL_PART) :
-        m_mesh(new TriangleMesh(mesh)), m_type(type), object(object)
+    ModelVolume(ModelObject *object, const std::shared_ptr<const TriangleMesh> &mesh, ModelVolumeType type = ModelVolumeType::MODEL_PART) : m_mesh(mesh), m_type(type), object(object)
     {
-        assert(check());
-        if (m_mesh->facets_count() > 1) calculate_convex_hull();
-    }
-    ModelVolume(ModelObject *object, TriangleMesh &&mesh, ModelVolumeType type = ModelVolumeType::MODEL_PART)
-        : m_mesh(new TriangleMesh(std::move(mesh))), m_type(type), object(object)
-    {
-        assert(check());
-        if (m_mesh->facets_count() > 1) calculate_convex_hull();
+		assert(this->id().valid());
+        assert(this->config.id().valid());
+        assert(this->supported_facets.id().valid());
+        assert(this->seam_facets.id().valid());
+        assert(this->mmu_segmentation_facets.id().valid());
+        assert(this->fuzzy_skin_facets.id().valid());
+        assert(this->id() != this->config.id());
+        assert(this->id() != this->supported_facets.id());
+        assert(this->id() != this->seam_facets.id());
+        assert(this->id() != this->mmu_segmentation_facets.id());
+        assert(this->id() != this->fuzzy_skin_facets.id());
     }
     ModelVolume(ModelObject *object, TriangleMesh &&mesh, TriangleMesh &&convex_hull, ModelVolumeType type = ModelVolumeType::MODEL_PART) :
 		m_mesh(new TriangleMesh(std::move(mesh))), m_convex_hull(new TriangleMesh(std::move(convex_hull))), m_type(type), object(object) {
-        assert(check());
+		assert(this->id().valid());
+        assert(this->config.id().valid());
+        assert(this->supported_facets.id().valid());
+        assert(this->seam_facets.id().valid());
+        assert(this->mmu_segmentation_facets.id().valid());
+        assert(this->fuzzy_skin_facets.id().valid());
+        assert(this->id() != this->config.id());
+        assert(this->id() != this->supported_facets.id());
+        assert(this->id() != this->seam_facets.id());
+        assert(this->id() != this->mmu_segmentation_facets.id());
+        assert(this->id() != this->fuzzy_skin_facets.id());
 	}
 
     // Copying an existing volume, therefore this volume will get a copy of the ID assigned.
@@ -985,23 +1108,25 @@ private:
         ObjectBase(other),
         name(other.name), source(other.source), m_mesh(other.m_mesh), m_convex_hull(other.m_convex_hull),
         config(other.config), m_type(other.m_type), object(object), m_transformation(other.m_transformation),
-        supported_facets(other.supported_facets), seam_facets(other.seam_facets), mm_segmentation_facets(other.mm_segmentation_facets),
-        cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape)
+        supported_facets(other.supported_facets), seam_facets(other.seam_facets), mmu_segmentation_facets(other.mmu_segmentation_facets),
+        fuzzy_skin_facets(other.fuzzy_skin_facets), cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape)
     {
 		assert(this->id().valid()); 
         assert(this->config.id().valid()); 
         assert(this->supported_facets.id().valid());
         assert(this->seam_facets.id().valid());
-        assert(this->mm_segmentation_facets.id().valid());
+        assert(this->mmu_segmentation_facets.id().valid());
+        assert(this->fuzzy_skin_facets.id().valid());
         assert(this->id() != this->config.id());
         assert(this->id() != this->supported_facets.id());
         assert(this->id() != this->seam_facets.id());
-        assert(this->id() != this->mm_segmentation_facets.id());
+        assert(this->id() != this->mmu_segmentation_facets.id());
 		assert(this->id() == other.id());
         assert(this->config.id() == other.config.id());
         assert(this->supported_facets.id() == other.supported_facets.id());
         assert(this->seam_facets.id() == other.seam_facets.id());
-        assert(this->mm_segmentation_facets.id() == other.mm_segmentation_facets.id());
+        assert(this->mmu_segmentation_facets.id() == other.mmu_segmentation_facets.id());
+        assert(this->fuzzy_skin_facets.id() == other.fuzzy_skin_facets.id());
         this->set_material_id(other.material_id());
     }
     // Providing a new mesh, therefore this volume will get a new unique ID assigned.
@@ -1013,11 +1138,13 @@ private:
         assert(this->config.id().valid()); 
         assert(this->supported_facets.id().valid());
         assert(this->seam_facets.id().valid());
-        assert(this->mm_segmentation_facets.id().valid());
+        assert(this->mmu_segmentation_facets.id().valid());
+        assert(this->fuzzy_skin_facets.id().valid());
         assert(this->id() != this->config.id());
         assert(this->id() != this->supported_facets.id());
         assert(this->id() != this->seam_facets.id());
-        assert(this->id() != this->mm_segmentation_facets.id());
+        assert(this->id() != this->mmu_segmentation_facets.id());
+        assert(this->id() != this->fuzzy_skin_facets.id());
 		assert(this->id() != other.id());
         assert(this->config.id() == other.config.id());
         this->set_material_id(other.material_id());
@@ -1028,11 +1155,13 @@ private:
         assert(this->config.id() != other.config.id()); 
         assert(this->supported_facets.id() != other.supported_facets.id());
         assert(this->seam_facets.id() != other.seam_facets.id());
-        assert(this->mm_segmentation_facets.id() != other.mm_segmentation_facets.id());
+        assert(this->mmu_segmentation_facets.id() != other.mmu_segmentation_facets.id());
+        assert(this->fuzzy_skin_facets.id() != other.fuzzy_skin_facets.id());
         assert(this->id() != this->config.id());
         assert(this->supported_facets.empty());
         assert(this->seam_facets.empty());
-        assert(this->mm_segmentation_facets.empty());
+        assert(this->mmu_segmentation_facets.empty());
+        assert(this->fuzzy_skin_facets.empty());
     }
 
     ModelVolume& operator=(ModelVolume &rhs) = delete;
@@ -1040,19 +1169,32 @@ private:
 	friend class cereal::access;
 	friend class UndoRedo::StackImpl;
 	// Used for deserialization, therefore no IDs are allocated.
-	ModelVolume() : ObjectBase(-1), config(-1), supported_facets(-1), seam_facets(-1), mm_segmentation_facets(-1), object(nullptr) {
+	ModelVolume() : ObjectBase(-1), config(-1), supported_facets(-1), seam_facets(-1), mmu_segmentation_facets(-1), fuzzy_skin_facets(-1), object(nullptr) {
 		assert(this->id().invalid());
         assert(this->config.id().invalid());
         assert(this->supported_facets.id().invalid());
         assert(this->seam_facets.id().invalid());
-        assert(this->mm_segmentation_facets.id().invalid());
+        assert(this->mmu_segmentation_facets.id().invalid());
+        assert(this->fuzzy_skin_facets.id().invalid());
 	}
 	template<class Archive> void load(Archive &ar) {
 		bool has_convex_hull;
+        // BBS: add backup, check modify
+        bool mesh_changed = false;
+        auto tr = m_transformation;
         ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info);
+        mesh_changed |= !(tr == m_transformation);
+        auto t = supported_facets.timestamp();
         cereal::load_by_value(ar, supported_facets);
+        mesh_changed |= t != supported_facets.timestamp();
+        t = seam_facets.timestamp();
         cereal::load_by_value(ar, seam_facets);
-        cereal::load_by_value(ar, mm_segmentation_facets);
+        mesh_changed |= t != seam_facets.timestamp();
+        t = mmu_segmentation_facets.timestamp();
+        cereal::load_by_value(ar, mmu_segmentation_facets);
+        mesh_changed |= t != mmu_segmentation_facets.timestamp();
+        cereal::load_by_value(ar, fuzzy_skin_facets);
+        mesh_changed |= t != fuzzy_skin_facets.timestamp();
         cereal::load_by_value(ar, config);
         cereal::load(ar, text_configuration);
         cereal::load(ar, emboss_shape);
@@ -1064,13 +1206,16 @@ private:
 				this->calculate_convex_hull();
 		} else
 			m_convex_hull.reset();
+        if (mesh_changed && object)
+            Slic3r::save_object_mesh(*object);
 	}
 	template<class Archive> void save(Archive &ar) const {
 		bool has_convex_hull = m_convex_hull.get() != nullptr;
         ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info);
         cereal::save_by_value(ar, supported_facets);
         cereal::save_by_value(ar, seam_facets);
-        cereal::save_by_value(ar, mm_segmentation_facets);
+        cereal::save_by_value(ar, mmu_segmentation_facets);
+        cereal::save_by_value(ar, fuzzy_skin_facets);
         cereal::save_by_value(ar, config);
         cereal::save(ar, text_configuration);
         cereal::save(ar, emboss_shape);
@@ -1093,6 +1238,7 @@ inline const ModelVolume* model_volume_find_by_id(const ModelVolumePtrs &model_v
 enum ModelInstanceEPrintVolumeState : unsigned char
 {
     ModelInstancePVS_Inside,
+    ModelInstancePVS_Limited,
     ModelInstancePVS_Partly_Outside,
     ModelInstancePVS_Fully_Outside,
     ModelInstanceNum_BedStates
@@ -1104,21 +1250,56 @@ class ModelInstance final : public ObjectBase
 {
 private:
     Geometry::Transformation m_transformation;
+    Geometry::Transformation m_assemble_transformation;
+    Vec3d m_offset_to_assembly{ 0.0, 0.0, 0.0 };
+    bool m_assemble_initialized;
 
 public:
     // flag showing the position of this instance with respect to the print volume (set by Print::validate() using ModelObject::check_instances_print_volume_state())
     ModelInstanceEPrintVolumeState print_volume_state;
     // Whether or not this instance is printable
-    bool printable { true };
+    bool printable;
+    bool auto_drop;
+    bool use_loaded_id_for_label {false};
+    int arrange_order = 0; // BBS
+    size_t loaded_id = 0; // BBS
+
+    size_t get_labeled_id() const
+    {
+        if (use_loaded_id_for_label && (loaded_id > 0))
+            return loaded_id;
+        else
+            return id().id;
+    }
 
     ModelObject* get_object() const { return this->object; }
 
     const Geometry::Transformation& get_transformation() const { return m_transformation; }
     void set_transformation(const Geometry::Transformation& transformation) { m_transformation = transformation; }
 
+    const Geometry::Transformation& get_assemble_transformation() const { return m_assemble_transformation; }
+    void set_assemble_transformation(const Geometry::Transformation& transformation) {
+        m_assemble_initialized = true;
+        m_assemble_transformation = transformation;
+    }
+    void set_assemble_from_transform(const Transform3d& transform) {
+        m_assemble_initialized = true;
+        m_assemble_transformation.set_matrix(transform);
+    }
+    Vec3d get_assemble_offset() const {return m_assemble_transformation.get_offset(); }
+    void set_assemble_offset(const Vec3d& offset) { m_assemble_transformation.set_offset(offset); }
+    void set_assemble_rotation(const Vec3d &rotation) { m_assemble_transformation.set_rotation(rotation); }
+    void rotate_assemble(double angle, const Vec3d& axis) {
+        m_assemble_transformation.set_rotation(m_assemble_transformation.get_rotation() + Geometry::extract_euler_angles(Eigen::Quaterniond(Eigen::AngleAxisd(angle, axis)).toRotationMatrix()));
+    }
+
+    // BBS
+    void set_offset_to_assembly(const Vec3d& offset) { m_offset_to_assembly = offset; }
+    Vec3d get_offset_to_assembly() const { return m_offset_to_assembly; }
+
     Vec3d get_offset() const { return m_transformation.get_offset(); }
     double get_offset(Axis axis) const { return m_transformation.get_offset(axis); }
-    
+
     void set_offset(const Vec3d& offset) { m_transformation.set_offset(offset); }
     void set_offset(Axis axis, double offset) { m_transformation.set_offset(axis, offset); }
 
@@ -1127,6 +1308,13 @@ public:
 
     void set_rotation(const Vec3d& rotation) { m_transformation.set_rotation(rotation); }
     void set_rotation(Axis axis, double rotation) { m_transformation.set_rotation(axis, rotation); }
+
+    // BBS
+    void rotate(Matrix3d rotation_matrix) {
+        auto rotation = m_transformation.get_rotation_matrix();
+        rotation      = rotation_matrix * rotation;
+        set_rotation(Geometry::Transformation(rotation).get_rotation());
+    }
 
     Vec3d get_scaling_factor() const { return m_transformation.get_scaling_factor(); }
     double get_scaling_factor(Axis axis) const { return m_transformation.get_scaling_factor(axis); }
@@ -1137,7 +1325,7 @@ public:
     Vec3d get_mirror() const { return m_transformation.get_mirror(); }
     double get_mirror(Axis axis) const { return m_transformation.get_mirror(axis); }
     bool is_left_handed() const { return m_transformation.is_left_handed(); }
-    
+
     void set_mirror(const Vec3d& mirror) { m_transformation.set_mirror(mirror); }
     void set_mirror(Axis axis, double mirror) { m_transformation.set_mirror(axis, mirror); }
 
@@ -1154,8 +1342,30 @@ public:
     Transform3d get_matrix_no_offset() const { return m_transformation.get_matrix_no_offset(); }
 
     bool is_printable() const { return object->printable && printable && (print_volume_state == ModelInstancePVS_Inside); }
+    bool is_assemble_initialized() { return m_assemble_initialized; }
 
-    void invalidate_object_bounding_box() { object->invalidate_bounding_box(); }
+    //BBS
+    double get_auto_brim_width(double deltaT, double adhesion) const;
+    double get_auto_brim_width() const;
+    // BBS
+    Polygon convex_hull_2d();
+    void invalidate_convex_hull_2d();
+
+    // Getting the input polygon for arrange
+    // We use void* as input type to avoid including Arrange.hpp in Model.hpp.
+    void get_arrange_polygon(void *arrange_polygon, const Slic3r::DynamicPrintConfig &config = Slic3r::DynamicPrintConfig()) const;
+
+    // Apply the arrange result on the ModelInstance
+    void apply_arrange_result(const Vec2d& offs, double rotation)
+    {
+        // write the transformation data into the model instance
+        set_rotation(Z, rotation);
+        set_offset(X, unscale<double>(offs(X)));
+        set_offset(Y, unscale<double>(offs(Y)));
+        this->object->invalidate_bounding_box();
+    }
+
+    ModelInstanceEPrintVolumeState calc_print_volume_state(const BuildVolume& build_volume) const;
 
 protected:
     friend class Print;
@@ -1166,15 +1376,33 @@ protected:
     explicit ModelInstance(const ModelInstance &rhs) = default;
     void     set_model_object(ModelObject *model_object) { object = model_object; }
 
+    ModelInstanceEPrintVolumeState update_print_volume_state(const BuildVolume& build_volume)
+    {
+        print_volume_state = calc_print_volume_state(build_volume);
+        return print_volume_state;
+    }
+
 private:
     // Parent object, owning this instance.
     ModelObject* object;
+    Polygon convex_hull; // BBS
 
     // Constructor, which assigns a new unique ID.
-    explicit ModelInstance(ModelObject* object) : print_volume_state(ModelInstancePVS_Inside), object(object) { assert(this->id().valid()); }
+    explicit ModelInstance(ModelObject* object)
+        : print_volume_state(ModelInstancePVS_Inside), printable(true), auto_drop(true), object(object), m_assemble_initialized(false)
+    {
+        assert(this->id().valid());
+    }
     // Constructor, which assigns a new unique ID.
     explicit ModelInstance(ModelObject *object, const ModelInstance &other) :
-        m_transformation(other.m_transformation), print_volume_state(ModelInstancePVS_Inside), printable(other.printable), object(object) { assert(this->id().valid() && this->id() != other.id()); }
+        m_transformation(other.m_transformation)
+        , m_assemble_transformation(other.m_assemble_transformation)
+        , m_offset_to_assembly(other.m_offset_to_assembly)
+        , print_volume_state(ModelInstancePVS_Inside)
+        , printable(other.printable)
+        , auto_drop(other.auto_drop)
+        , object(object)
+        , m_assemble_initialized(false) { assert(this->id().valid() && this->id() != other.id()); }
 
     explicit ModelInstance(ModelInstance &&rhs) = delete;
     ModelInstance& operator=(const ModelInstance &rhs) = delete;
@@ -1184,8 +1412,9 @@ private:
 	friend class UndoRedo::StackImpl;
 	// Used for deserialization, therefore no IDs are allocated.
 	ModelInstance() : ObjectBase(-1), object(nullptr) { assert(this->id().invalid()); }
-	template<class Archive> void serialize(Archive &ar) {
-        ar(m_transformation, print_volume_state, printable);
+    // BBS. Add added members to archive.
+    template<class Archive> void serialize(Archive& ar) {
+        ar(m_transformation, print_volume_state, printable, auto_drop, m_assemble_transformation, m_offset_to_assembly, m_assemble_initialized);
     }
 };
 
@@ -1193,8 +1422,9 @@ private:
 class ModelWipeTower final : public ObjectBase
 {
 public:
-	Vec2d		position;
-	double 		rotation;
+    // BBS: add partplate logic
+	std::vector<Vec2d>      positions;
+	double 	                rotation;
 
 private:
 	friend class cereal::access;
@@ -1216,7 +1446,73 @@ private:
     ModelWipeTower& operator=(ModelWipeTower &&rhs) = delete;
 
     // For serialization / deserialization of ModelWipeTower composed into another class into the Undo / Redo stack as a separate object.
-    template<typename Archive> void serialize(Archive &ar) { ar(position, rotation); }
+    template<typename Archive> void serialize(Archive &ar) { ar(positions, rotation); }
+};
+
+// BBS structure stores extruder parameters and speed map of all models
+struct ExtruderParams
+{
+    std::string materialName;
+    //std::array<double, BedType::btCount> bedTemp;
+    int bedTemp;
+    double heatEndTemp;
+};
+
+struct GlobalSpeedMap
+{
+    double perimeterSpeed;
+    double externalPerimeterSpeed;
+    double infillSpeed;
+    double solidInfillSpeed;
+    double topSolidInfillSpeed;
+    double supportSpeed;
+    double smallPerimeterSpeed;
+    double maxSpeed;
+    Polygon bed_poly;
+};
+
+/* Profile data */
+class ModelProfileInfo
+{
+public:
+    std::string ProfileTile;
+    std::string ProfileCover;
+    std::string ProfileDescription;
+    std::string ProfileUserId;
+    std::string ProfileUserName;
+};
+
+/* info in ModelDesignInfo can not changed after initialization */
+class ModelDesignInfo
+{
+public:
+    std::string DesignId;               // DisignId for Model
+    std::string Designer;               // Designer nickname in utf8
+    std::string DesignerUserId;         // Designer user_id string
+};
+
+/* info in ModelInfo can be changed after initialization */
+class ModelInfo
+{
+public:
+    std::string cover_file;     // utf8 format
+    std::string license;        // utf8 format
+    std::string description;    // utf8 format
+    std::string copyright;      // utf8 format
+    std::string model_name;     // utf8 format
+    std::string origin;         // utf8 format
+
+    std::map<std::string, std::string> metadata_items; // other meta data items
+
+    void load(ModelInfo &info) {
+        this->cover_file    = info.cover_file;
+        this->license       = info.license;
+        this->description   = info.description;
+        this->copyright     = info.copyright;
+        this->model_name    = info.model_name;
+        this->origin        = info.origin;
+        this->metadata_items = info.metadata_items;
+    }
 };
 
 // The print bed content.
@@ -1233,38 +1529,98 @@ public:
     // Objects are owned by a model. Each model may have multiple instances, each instance having its own transformation (shift, scale, rotation).
     ModelObjectPtrs     objects;
     // Wipe tower object.
-    ModelWipeTower	    wipe_tower;
+    ModelWipeTower	wipe_tower;
+    // BBS static members store extruder parameters and speed map of all models
+    static std::map<size_t, ExtruderParams> extruderParamsMap;
+    static GlobalSpeedMap printSpeedMap;
+
+    // DesignInfo of Model
+    std::string stl_design_id;
+    std::string stl_design_country;
+    std::shared_ptr<ModelDesignInfo> design_info = nullptr;
+    std::shared_ptr<ModelInfo> model_info = nullptr;
+    std::shared_ptr<ModelProfileInfo> profile_info = nullptr;
+
+    //makerlab information
+    std::string mk_name;
+    std::string mk_version;
+    std::vector<std::string> md_name;
+    std::vector<std::string> md_value;
+
+    void SetDesigner(std::string designer, std::string designer_user_id) {
+        if (design_info == nullptr) {
+            design_info = std::make_shared<ModelDesignInfo>();
+        }
+        design_info->Designer = designer;
+        //BBS tips: clean design user id when set designer
+        design_info->DesignerUserId = designer_user_id;
+    }
 
     // Extensions for color print
-    CustomGCode::Info custom_gcode_per_print_z;
-    
+    // CustomGCode::Info custom_gcode_per_print_z;
+    //BBS: replace model custom gcode with current plate custom gcode
+    int curr_plate_index{ 0 };
+    std::map<int, CustomGCode::Info> plates_custom_gcodes; //map<plate_index, CustomGCode::Info>
+
+    const CustomGCode::Info get_curr_plate_custom_gcodes() const {
+        if (plates_custom_gcodes.find(curr_plate_index) != plates_custom_gcodes.end()) {
+            return plates_custom_gcodes.at(curr_plate_index);
+        }
+        return CustomGCode::Info();
+    }
+
     // Default constructor assigns a new ID to the model.
     Model() { assert(this->id().valid()); }
-    ~Model() { this->clear_objects(); this->clear_materials(); }
+    ~Model();
 
     /* To be able to return an object from own copy / clone methods. Hopefully the compiler will do the "Copy elision" */
     /* (Omits copy and move(since C++11) constructors, resulting in zero - copy pass - by - value semantics). */
     Model(const Model &rhs) : ObjectBase(-1) { assert(this->id().invalid()); this->assign_copy(rhs); assert(this->id().valid()); assert(this->id() == rhs.id()); }
-    explicit Model(Model &&rhs) : ObjectBase(-1) { assert(this->id().invalid()); this->assign_copy(std::move(rhs)); assert(this->id().valid()); assert(this->id() == rhs.id()); }
+    // BBS: remove explicit, prefer use move constructor in function return model
+    Model(Model &&rhs) : ObjectBase(-1) { assert(this->id().invalid()); this->assign_copy(std::move(rhs)); assert(this->id().valid()); assert(this->id() == rhs.id()); }
     Model& operator=(const Model &rhs) { this->assign_copy(rhs); assert(this->id().valid()); assert(this->id() == rhs.id()); return *this; }
     Model& operator=(Model &&rhs) { this->assign_copy(std::move(rhs)); assert(this->id().valid()); assert(this->id() == rhs.id()); return *this; }
 
     OBJECTBASE_DERIVED_COPY_MOVE_CLONE(Model)
 
-    enum class LoadAttribute : int {
-        AddDefaultInstances,
-        CheckVersion
-    };
-    using LoadAttributes = enum_bitmask<LoadAttribute>;
+    static Model read_from_step(const std::string&                                      input_file,
+                                LoadStrategy                                            options,
+                                ImportStepProgressFn                                    stepFn,
+                                StepIsUtf8Fn                                            stepIsUtf8Fn,
+                                std::function<int(Slic3r::Step&, double&, double&, bool&)>     step_mesh_fn,
+                                double                                                  linear_defletion,
+                                double                                                  angle_defletion,
+                                bool                                                    is_split_compound);
 
+    //BBS: add part plate related logic
+    // BBS: backup
+    //BBS: is_xxx is used for is_bbs_3mf when loading 3mf, is used for is_inches when loading amf
     static Model read_from_file(
-        const std::string& input_file, 
+        const std::string& input_file,
         DynamicPrintConfig* config = nullptr, ConfigSubstitutionContext* config_substitutions = nullptr,
-        LoadAttributes options = LoadAttribute::AddDefaultInstances);
+        LoadStrategy options = LoadStrategy::AddDefaultInstances, PlateDataPtrs* plate_data = nullptr,
+        std::vector<Preset*>* project_presets = nullptr, bool* is_xxx = nullptr, Semver* file_version = nullptr, Import3mfProgressFn proFn = nullptr,
+                                ImportstlProgressFn        stlFn                = nullptr,
+                                BBLProject *               project              = nullptr,
+                                int                        plate_id             = 0,
+                                ObjImportColorFn           objFn                = nullptr
+                                );
+    // BBS
+    static bool    obj_import_vertex_color_deal(const std::vector<unsigned char> &vertex_filament_ids, const unsigned char &first_extruder_id, Model *model);
+    static bool    obj_import_face_color_deal(const std::vector<unsigned char> &face_filament_ids, const unsigned char &first_extruder_id, Model *model);
+    static double findMaxSpeed(const ModelObject* object);
+    static double getThermalLength(const ModelVolume* modelVolumePtr);
+    static double getThermalLength(const std::vector<ModelVolume*> modelVolumePtrs);
+    static Polygon getBedPolygon() { return Model::printSpeedMap.bed_poly; }
+    //BBS static functions that update extruder params and speed table
+    static void setPrintSpeedTable(const DynamicPrintConfig& config, const PrintConfig& print_config);
+    static void setExtruderParams(const DynamicPrintConfig& config, int extruders_count);
+
+    // BBS: backup
     static Model read_from_archive(
-        const std::string& input_file, 
-        DynamicPrintConfig* config, ConfigSubstitutionContext* config_substitutions,
-        LoadAttributes options = LoadAttribute::AddDefaultInstances);
+        const std::string& input_file,
+        DynamicPrintConfig* config, ConfigSubstitutionContext* config_substitutions, En3mfType& out_file_type,
+        LoadStrategy options = LoadStrategy::AddDefaultInstances, PlateDataPtrs* plate_data = nullptr, std::vector<Preset*>* project_presets = nullptr, Semver* file_version = nullptr, Import3mfProgressFn proFn = nullptr, BBLProject* project = nullptr);
 
     // Add a new ModelObject to this Model, generate a new ID for this ModelObject.
     ModelObject* add_object();
@@ -1275,6 +1631,11 @@ public:
     bool         delete_object(ObjectID id);
     bool         delete_object(ModelObject* object);
     void         clear_objects();
+    // BBS: backup, reuse objects
+    void         collect_reusable_objects(std::vector<ObjectBase *> & objects);
+    void         set_object_backup_id(ModelObject const & object, int uuid);
+    int          get_object_backup_id(ModelObject const & object); // generate new if needed
+    int          get_object_backup_id(ModelObject const & object) const; // generate new if needed
 
     ModelMaterial* add_material(t_model_material_id material_id);
     ModelMaterial* add_material(t_model_material_id material_id, const ModelMaterial &other);
@@ -1285,6 +1646,7 @@ public:
 
     void          delete_material(t_model_material_id material_id);
     void          clear_materials();
+    // Make sure all objects have at least one instance
     bool          add_default_instances();
     // Returns approximate axis aligned bounding box of this model.
     BoundingBoxf3 bounding_box_approx() const;
@@ -1292,14 +1654,14 @@ public:
     BoundingBoxf3 bounding_box_exact() const;
     // Return maximum height of all printable objects.
     double        max_z() const;
-    // Set the print_volume_state of PrintObject::instances, 
+    // Set the print_volume_state of PrintObject::instances,
     // return total number of printable objects.
     unsigned int  update_print_volume_state(const BuildVolume &build_volume);
     // Returns true if any ModelObject was modified.
     bool 		  center_instances_around_point(const Vec2d &point);
     void 		  translate(coordf_t x, coordf_t y, coordf_t z) { for (ModelObject *o : this->objects) o->translate(x, y, z); }
     TriangleMesh  mesh() const;
-    
+
     // Croaks if the duplicated objects do not fit the print bed.
     void duplicate_objects_grid(size_t x, size_t y, coordf_t dist);
 
@@ -1320,6 +1682,17 @@ public:
     std::string   propose_export_file_name_and_path() const;
     // Propose an output path, replace extension. The new_extension shall contain the initial dot.
     std::string   propose_export_file_name_and_path(const std::string &new_extension) const;
+    //BBS: add auxiliary files temp path
+    std::string   get_auxiliary_file_temp_path();
+
+    // BBS: backup
+    std::string   get_backup_path();
+    std::string   get_backup_path(const std::string &sub_path);
+    void          set_backup_path(const std::string &path);
+    void          load_from(Model & model);
+    bool          is_need_backup() { return need_backup;  }
+    void          set_need_backup();
+    void          remove_backup_path_if_exist();
 
     // Checks if any of objects is painted using the fdm support painting gizmo.
     bool          is_fdm_support_painted() const;
@@ -1327,21 +1700,37 @@ public:
     bool          is_seam_painted() const;
     // Checks if any of objects is painted using the multi-material painting gizmo.
     bool          is_mm_painted() const;
+    // Checks if any of objects is painted using the fuzzy skin painting gizmo.
+    bool          is_fuzzy_skin_painted() const;
+
+    std::unique_ptr<CalibPressureAdvancePattern> calib_pa_pattern;
 
 private:
-    explicit Model(int) : ObjectBase(-1) { assert(this->id().invalid()); }
+    explicit Model(int) : ObjectBase(-1)
+        {
+        assert(this->id().invalid());
+    }
 	void assign_new_unique_ids_recursive();
 	void update_links_bottom_up_recursive();
 
 	friend class cereal::access;
 	friend class UndoRedo::StackImpl;
-	template<class Archive> void serialize(Archive &ar) {
-		Internal::StaticSerializationWrapper<ModelWipeTower> wipe_tower_wrapper(wipe_tower);
-		ar(materials, objects, wipe_tower_wrapper);
+    template<class Archive> void load(Archive& ar) {
+        Internal::StaticSerializationWrapper<ModelWipeTower> wipe_tower_wrapper(wipe_tower);
+        ar(materials, objects, wipe_tower_wrapper);
     }
-};
+    template<class Archive> void save(Archive& ar) const {
+        Internal::StaticSerializationWrapper<ModelWipeTower const> wipe_tower_wrapper(wipe_tower);
+        ar(materials, objects, wipe_tower_wrapper);
+    }
 
-ENABLE_ENUM_BITMASK_OPERATORS(Model::LoadAttribute)
+    //BBS: add aux temp directory
+    // BBS: backup
+    std::string backup_path;
+    bool need_backup = false;
+    std::map<int, int> object_backup_id_map; // ObjectId -> backup id;
+    int next_object_backup_id = 1;
+};
 
 #undef OBJECTBASE_DERIVED_COPY_MOVE_CLONE
 #undef OBJECTBASE_DERIVED_PRIVATE_COPY_MOVE
@@ -1371,9 +1760,12 @@ bool model_custom_seam_data_changed(const ModelObject& mo, const ModelObject& mo
 // The function assumes that volumes list is synchronized.
 extern bool model_mmu_segmentation_data_changed(const ModelObject& mo, const ModelObject& mo_new);
 
-// If the model has object(s) which contains a modofoer, then it is currently not supported by the SLA mode.
-// Either the model cannot be loaded, or a SLA printer has to be activated.
-bool model_has_parameter_modifiers_in_objects(const Model& model);
+// Test whether the now ModelObject has newer fuzzy skin data than the old one.
+// The function assumes that volumes list is synchronized.
+extern bool model_fuzzy_skin_data_changed(const ModelObject &mo, const ModelObject &mo_new);
+
+bool model_brim_points_data_changed(const ModelObject& mo, const ModelObject& mo_new);
+
 // If the model has multi-part objects, then it is currently not supported by the SLA mode.
 // Either the model cannot be loaded, or a SLA printer has to be activated.
 bool model_has_multi_part_objects(const Model &model);
@@ -1393,8 +1785,11 @@ static const double SINKING_MIN_Z_THRESHOLD = 0.05;
 
 namespace cereal
 {
-	template <class Archive> struct specialize<Archive, Slic3r::ModelVolume, cereal::specialization::member_load_save> {};
-	template <class Archive> struct specialize<Archive, Slic3r::ModelConfigObject, cereal::specialization::member_serialize> {};
+    template <class Archive> struct specialize<Archive, Slic3r::ModelVolume, cereal::specialization::member_load_save> {};
+    // BBS: backup
+    template <class Archive> struct specialize<Archive, Slic3r::Model, cereal::specialization::member_load_save> {};
+    template <class Archive> struct specialize<Archive, Slic3r::ModelObject, cereal::specialization::member_load_save> {};
+    template <class Archive> struct specialize<Archive, Slic3r::ModelConfigObject, cereal::specialization::member_serialize> {};
 }
 
 #endif /* slic3r_Model_hpp_ */

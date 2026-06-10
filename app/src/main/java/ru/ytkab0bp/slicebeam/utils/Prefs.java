@@ -31,6 +31,59 @@ public class Prefs {
         mPrefs.edit().putString("last_commit", BuildConfig.COMMIT).apply();
     }
 
+    /**
+     * Up to 16 filaments used for multi-color printing/painting. Each is a material type + color,
+     * stored as comma-separated "TYPE|RRGGBB".
+     */
+    public final static int MAX_FILAMENT_COLORS = 16;
+
+    public static java.util.List<FilamentSlot> getFilamentSlots() {
+        java.util.List<FilamentSlot> slots = new java.util.ArrayList<>();
+        String raw = mPrefs.getString("filament_palette", null);
+        if (raw == null || raw.isEmpty()) {
+            slots.add(new FilamentSlot(0xFF1AC5A2, "PLA")); // OrcaSlicer teal PLA as the single default
+            return slots;
+        }
+        for (String part : raw.split(",")) {
+            if (part.isEmpty()) continue;
+            String type = "PLA";
+            String hex = part;
+            int bar = part.indexOf('|');
+            if (bar >= 0) {
+                type = part.substring(0, bar);
+                hex = part.substring(bar + 1);
+            }
+            int color;
+            try {
+                color = (int) Long.parseLong(hex.trim(), 16) | 0xFF000000;
+            } catch (NumberFormatException e) {
+                color = 0xFF1AC5A2;
+            }
+            slots.add(new FilamentSlot(color, type));
+            if (slots.size() >= MAX_FILAMENT_COLORS) break;
+        }
+        if (slots.isEmpty()) slots.add(new FilamentSlot(0xFF1AC5A2, "PLA"));
+        return slots;
+    }
+
+    public static void setFilamentSlots(java.util.List<FilamentSlot> slots) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < Math.min(slots.size(), MAX_FILAMENT_COLORS); i++) {
+            if (sb.length() > 0) sb.append(',');
+            FilamentSlot s = slots.get(i);
+            sb.append(s.type).append('|').append(String.format("%06X", s.color & 0xFFFFFF));
+        }
+        mPrefs.edit().putString("filament_palette", sb.toString()).apply();
+    }
+
+    /** Colors only, derived from the filament slots (e.g. for rendering). */
+    public static int[] getFilamentPalette() {
+        java.util.List<FilamentSlot> slots = getFilamentSlots();
+        int[] colors = new int[slots.size()];
+        for (int i = 0; i < slots.size(); i++) colors[i] = slots.get(i).color;
+        return colors;
+    }
+
     public static boolean isScaleInputInMM() {
         return mPrefs.getBoolean("scale_input_mm", false);
     }
@@ -225,6 +278,14 @@ public class Prefs {
 
     public static void setCloudRemoteLastModified(long lm) {
         mPrefs.edit().putLong("cloud_remote_last_modified", lm).apply();
+    }
+
+    public static boolean isPerformanceModeEnabled() {
+        return mPrefs.getBoolean("performance_mode", false);
+    }
+
+    public static void setPerformanceModeEnabled(boolean en) {
+        mPrefs.edit().putBoolean("performance_mode", en).apply();
     }
 
     public enum ThemeMode {

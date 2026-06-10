@@ -1,79 +1,106 @@
-///|/ Copyright (c) Prusa Research 2017 - 2023 Vojtěch Bubník @bubnikv, Lukáš Matěna @lukasmatena
-///|/ Copyright (c) 2017 Joseph Lenox @lordofhyphens
-///|/ Copyright (c) Slic3r 2014 - 2015 Alessandro Ranellucci @alranel
-///|/
-///|/ ported from lib/Slic3r/Extruder.pm:
-///|/ Copyright (c) Slic3r 2011 - 2014 Alessandro Ranellucci @alranel
-///|/
-///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
-///|/
 #include "Extruder.hpp"
-#include "GCode/GCodeWriter.hpp"
 #include "PrintConfig.hpp"
 
 namespace Slic3r {
 
-Extruder::Extruder(unsigned int id, GCodeConfig *config) :
+std::vector<double> Extruder::m_share_E = std::vector<double>(MAXIMUM_EXTRUDER_NUMBER, 0);
+std::vector<double> Extruder::m_share_retracted = std::vector<double>(MAXIMUM_EXTRUDER_NUMBER, 0);
+
+Extruder::Extruder(unsigned int id, GCodeConfig *config, bool share_extruder) :
     m_id(id),
-    m_config(config)
+    m_config(config),
+    m_share_extruder(share_extruder)
 {
+    reset();
+
     // cache values that are going to be called often
-    m_e_per_mm3 = this->extrusion_multiplier();
-    if (! m_config->use_volumetric_e)
-        m_e_per_mm3 /= this->filament_crossection();
+    m_e_per_mm3 = this->filament_flow_ratio();
+    m_e_per_mm3 /= this->filament_crossection();
 }
 
-std::pair<double, double> Extruder::extrude(double dE)
+unsigned int Extruder::extruder_id() const
 {
-    assert(! std::isnan(dE));
-    // in case of relative E distances we always reset to 0 before any output
-    if (m_config->use_relative_e_distances)
-        m_E = 0.;
-    // Quantize extruder delta to G-code resolution.
-    dE = GCodeFormatter::quantize_e(dE);
-    m_E          += dE;
-    m_absolute_E += dE;
-    if (dE < 0.)
-        m_retracted -= dE;
-    return std::make_pair(dE, m_E);
+    assert(m_config);
+    if (m_id < m_config->filament_map.size()) {
+        return m_config->filament_map.get_at(m_id) - 1;
+    }
+    return 0;
+}
+
+double Extruder::extrude(double dE)
+{
+    // BBS
+    if (m_share_extruder) {
+        if (m_config->use_relative_e_distances)
+            m_share_E[extruder_id()] = 0.;
+        m_share_E[extruder_id()] += dE;
+        m_absolute_E += dE;
+        if (dE < 0.)
+            m_share_retracted[extruder_id()] -= dE;
+    } else {
+        // in case of relative E distances we always reset to 0 before any output
+        if (m_config->use_relative_e_distances)
+            m_E = 0.;
+        m_E          += dE;
+        m_absolute_E += dE;
+        if (dE < 0.)
+            m_retracted -= dE;
+    }
+    return dE;
 }
 
 /* This method makes sure the extruder is retracted by the specified amount
    of filament and returns the amount of filament retracted.
-   If the extruder is already retracted by the same or a greater amount, 
+   If the extruder is already retracted by the same or a greater amount,
    this method is a no-op.
    The restart_extra argument sets the extra length to be used for
    unretraction. If we're actually performing a retraction, any restart_extra
    value supplied will overwrite the previous one if any. */
-std::pair<double, double> Extruder::retract(double retract_length, double restart_extra)
+double Extruder::retract(double length, double restart_extra)
 {
-    assert(! std::isnan(retract_length));
-    assert(! std::isnan(restart_extra) && restart_extra >= 0);
-    // in case of relative E distances we always reset to 0 before any output
-    if (m_config->use_relative_e_distances)
-        m_E = 0.;
-    // Quantize extruder delta to G-code resolution.
-    double to_retract = this->retract_to_go(retract_length);
-    if (to_retract > 0.) {
-        m_E             -= to_retract;
-        m_absolute_E    -= to_retract;
-        m_retracted     += to_retract;
-        m_restart_extra  = restart_extra;
+    // BBS
+    if (m_share_extruder) {
+        if (m_config->use_relative_e_distances)
+            m_share_E[extruder_id()] = 0.;
+        double to_retract = std::max(0., length - m_share_retracted[extruder_id()]);
+        m_restart_extra = restart_extra;
+        if (to_retract > 0.) {
+            m_share_E[extruder_id()]             -= to_retract;
+            m_absolute_E          -= to_retract;
+            m_share_retracted[extruder_id()]     += to_retract;
+        }
+        return to_retract;
+    } else {
+        // in case of relative E distances we always reset to 0 before any output
+        if (m_config->use_relative_e_distances)
+            m_E = 0.;
+        double to_retract = std::max(0., length - m_retracted);
+        m_restart_extra = restart_extra;
+        if (to_retract > 0.) {
+            m_E             -= to_retract;
+            m_absolute_E    -= to_retract;
+            m_retracted     += to_retract;
+        }
+        return to_retract;
     }
-    return std::make_pair(to_retract, m_E);
 }
 
-double Extruder::retract_to_go(double retract_length) const
+double Extruder::unretract()
 {
-    return std::max(0., GCodeFormatter::quantize_e(retract_length - m_retracted));
-}
-
-std::pair<double, double> Extruder::unretract()
-{
-    auto [dE, emitE] = this->extrude(m_retracted + m_restart_extra);
-    m_retracted     = 0.;
-    m_restart_extra = 0.;
-    return std::make_pair(dE, emitE);
+    // BBS
+    if (m_share_extruder) {
+        double dE = m_share_retracted[extruder_id()] + m_restart_extra;
+        this->extrude(dE);
+        m_share_retracted[extruder_id()]     = 0.;
+        m_restart_extra = 0.;
+        return dE;
+    } else {
+        double dE = m_retracted + m_restart_extra;
+        this->extrude(dE);
+        m_retracted     = 0.;
+        m_restart_extra = 0.;
+        return dE;
+    }
 }
 
 // Setting the retract state from the script.
@@ -97,17 +124,25 @@ void Extruder::set_retracted(double retracted, double restart_extra)
 // Used filament volume in mm^3.
 double Extruder::extruded_volume() const
 {
-    return m_config->use_volumetric_e ? 
-        m_absolute_E + m_retracted :
-        this->used_filament() * this->filament_crossection();
+    // BBS
+    if (m_share_extruder) {
+        // FIXME: need to count m_retracted for share extruder machine
+        return this->used_filament() * this->filament_crossection();
+    } else {
+        return this->used_filament() * this->filament_crossection();
+    }
 }
 
 // Used filament length in mm.
 double Extruder::used_filament() const
 {
-    return m_config->use_volumetric_e ?
-        this->extruded_volume() / this->filament_crossection() :
-        m_absolute_E + m_retracted;
+    // BBS
+    if (m_share_extruder) {
+        // FIXME: need to count retracted length for share-extruder machine
+        return m_absolute_E;
+    } else {
+        return m_absolute_E + m_retracted;
+    }
 }
 
 double Extruder::filament_diameter() const
@@ -125,9 +160,9 @@ double Extruder::filament_cost() const
     return m_config->filament_cost.get_at(m_id);
 }
 
-double Extruder::extrusion_multiplier() const
+double Extruder::filament_flow_ratio() const
 {
-    return m_config->extrusion_multiplier.get_at(m_id);
+    return m_config->filament_flow_ratio.get_at(m_id);
 }
 
 // Return a "retract_before_wipe" percentage as a factor clamped to <0, 1>
@@ -136,19 +171,29 @@ double Extruder::retract_before_wipe() const
     return std::min(1., std::max(0., m_config->retract_before_wipe.get_at(m_id) * 0.01));
 }
 
-double Extruder::retract_length() const
+double Extruder::retraction_length() const
 {
-    return m_config->retract_length.get_at(m_id);
+    return m_config->retraction_length.get_at(m_id);
+}
+
+double Extruder::retract_lift() const
+{
+    return m_config->z_hop.get_at(m_id);
 }
 
 int Extruder::retract_speed() const
 {
-    return int(floor(m_config->retract_speed.get_at(m_id)+0.5));
+    return int(floor(m_config->retraction_speed.get_at(m_id)+0.5));
+}
+
+bool Extruder::use_firmware_retraction() const
+{
+    return m_config->use_firmware_retraction;
 }
 
 int Extruder::deretract_speed() const
 {
-    int speed = int(floor(m_config->deretract_speed.get_at(m_id)+0.5));
+    int speed = int(floor(m_config->deretraction_speed.get_at(m_id)+0.5));
     return (speed > 0) ? speed : this->retract_speed();
 }
 
@@ -159,12 +204,17 @@ double Extruder::retract_restart_extra() const
 
 double Extruder::retract_length_toolchange() const
 {
-    return m_config->retract_length_toolchange.get_at(m_id);
+    return m_config->retract_length_toolchange.get_at(extruder_id());
 }
 
 double Extruder::retract_restart_extra_toolchange() const
 {
-    return m_config->retract_restart_extra_toolchange.get_at(m_id);
+    return m_config->retract_restart_extra_toolchange.get_at(extruder_id());
+}
+
+double Extruder::travel_slope() const
+{
+    return m_config->travel_slope.get_at(extruder_id()) * PI / 180;
 }
 
 }
