@@ -113,6 +113,12 @@ public class BedFragment extends Fragment {
     private GCodeProcessorResult gCodeResult;
     private UnfoldMenu currentUnfoldMenu;
 
+    private int totalPlates = 1;
+    private int currentPlate = 1;
+    private File currentProjectFile;
+    private LinearLayout plateSelectorView;
+    private TextView plateSelectorText;
+
     private ru.ytkab0bp.slicebeam.view.PaintModeView paintModeView;
 
     private BedSwipeDownLayout swipeDownLayout;
@@ -448,6 +454,52 @@ public class BedFragment extends Fragment {
             }
         };
 
+        plateSelectorView = new LinearLayout(ctx);
+        plateSelectorView.setOrientation(LinearLayout.HORIZONTAL);
+        plateSelectorView.setGravity(Gravity.CENTER);
+        android.graphics.drawable.GradientDrawable plateBg = new android.graphics.drawable.GradientDrawable();
+        plateBg.setColor(0x88000000);
+        plateBg.setCornerRadius(ViewUtils.dp(8));
+        plateSelectorView.setBackground(plateBg);
+        plateSelectorView.setVisibility(View.GONE);
+
+        TextView prevPlateBtn = new TextView(ctx);
+        prevPlateBtn.setText("<");
+        prevPlateBtn.setTextSize(24);
+        prevPlateBtn.setTextColor(0xFFFFFFFF);
+        prevPlateBtn.setPadding(ViewUtils.dp(16), ViewUtils.dp(8), ViewUtils.dp(16), ViewUtils.dp(8));
+        prevPlateBtn.setOnClickListener(v -> {
+            if (currentPlate > 1 && currentProjectFile != null) {
+                switchPlate(currentPlate - 1);
+            }
+        });
+
+        plateSelectorText = new TextView(ctx);
+        plateSelectorText.setText("Plate 1/1");
+        plateSelectorText.setTextSize(16);
+        plateSelectorText.setTextColor(0xFFFFFFFF);
+        plateSelectorText.setPadding(ViewUtils.dp(8), ViewUtils.dp(8), ViewUtils.dp(8), ViewUtils.dp(8));
+
+        TextView nextPlateBtn = new TextView(ctx);
+        nextPlateBtn.setText(">");
+        nextPlateBtn.setTextSize(24);
+        nextPlateBtn.setTextColor(0xFFFFFFFF);
+        nextPlateBtn.setPadding(ViewUtils.dp(16), ViewUtils.dp(8), ViewUtils.dp(16), ViewUtils.dp(8));
+        nextPlateBtn.setOnClickListener(v -> {
+            if (currentPlate < totalPlates && currentProjectFile != null) {
+                switchPlate(currentPlate + 1);
+            }
+        });
+
+        plateSelectorView.addView(prevPlateBtn);
+        plateSelectorView.addView(plateSelectorText);
+        plateSelectorView.addView(nextPlateBtn);
+
+        FrameLayout.LayoutParams plateParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        plateParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        plateParams.topMargin = ViewUtils.dp(16);
+        overlayLayout.addView(plateSelectorView, plateParams);
+
         LinearLayout ll = new LinearLayout(ctx);
         DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
         boolean portrait = dm.widthPixels < dm.heightPixels;
@@ -730,11 +782,48 @@ public class BedFragment extends Fragment {
     }
 
     public void loadModel(File f) throws Slic3rRuntimeError {
-        loadModel(f, false, null);
+        loadModel(f, false, 1, null);
     }
 
-    public void loadModel(File f, boolean preserveProjectLayout, ModelLoadCallback callback) throws Slic3rRuntimeError {
-        Model m = new Model(f);
+    private void switchPlate(int newPlate) {
+        if (currentProjectFile == null) return;
+        currentPlate = newPlate;
+        updatePlateSelectorUI();
+        
+        // Show loading state if needed
+        try {
+            ModelLoadCallback callback = (loadedModel, firstNewObject, addedObjects) -> {
+                // Done
+            };
+            loadModelInternal(currentProjectFile, true, callback);
+        } catch (Slic3rRuntimeError e) {
+            Log.e("BedFragment", "Failed to switch plate", e);
+        }
+    }
+
+    private void updatePlateSelectorUI() {
+        if (totalPlates > 1) {
+            plateSelectorView.setVisibility(View.VISIBLE);
+            plateSelectorText.setText("Plate " + currentPlate + " / " + totalPlates);
+        } else {
+            plateSelectorView.setVisibility(View.GONE);
+        }
+    }
+
+    public void loadModel(File f, boolean preserveProjectLayout, int plateCount, ModelLoadCallback callback) throws Slic3rRuntimeError {
+        this.currentProjectFile = f;
+        this.totalPlates = plateCount;
+        if (plateCount > 1) {
+            this.currentPlate = 1;
+        } else {
+            this.currentPlate = 0; // Means load all (for 1 plate project or STLs)
+        }
+        updatePlateSelectorUI();
+        loadModelInternal(f, preserveProjectLayout, callback);
+    }
+
+    private void loadModelInternal(File f, boolean preserveProjectLayout, ModelLoadCallback callback) throws Slic3rRuntimeError {
+        Model m = new Model(f, currentPlate);
         if (model != null) {
             glView.queueEvent(new Runnable() {
                 @Override

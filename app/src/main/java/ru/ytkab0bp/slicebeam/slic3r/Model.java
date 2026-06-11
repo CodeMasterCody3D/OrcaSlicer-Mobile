@@ -20,11 +20,19 @@ public class Model {
     }
 
     public Model(File f) throws Slic3rRuntimeError {
-        this(f.getAbsolutePath());
+        this(f.getAbsolutePath(), 0);
+    }
+
+    public Model(File f, int plateId) throws Slic3rRuntimeError {
+        this(f.getAbsolutePath(), plateId);
     }
 
     public Model(String path) throws Slic3rRuntimeError {
-        this(Native.model_read_from_file(path, getBaseName(path)));
+        this(Native.model_read_from_file(path, getBaseName(path), 0));
+    }
+
+    public Model(String path, int plateId) throws Slic3rRuntimeError {
+        this(Native.model_read_from_file(path, getBaseName(path), plateId));
     }
 
     private Model(long ptr) {

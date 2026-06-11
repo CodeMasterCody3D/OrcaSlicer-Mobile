@@ -184,7 +184,7 @@ public class Native {
 
     static native long models_merge(long... ptrs);
     static native long model_create();
-    static native long model_read_from_file(String path, String baseName) throws Slic3rRuntimeError;
+    public static native long model_read_from_file(String path, String baseName, int plateId) throws Slic3rRuntimeError;
     static native int model_get_objects_count(long ptr);
     static native void model_add_object_from_another(long ptr, long from, int i);
     static native void model_delete_object(long ptr, int i);

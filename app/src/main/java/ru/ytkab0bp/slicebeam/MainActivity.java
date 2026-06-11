@@ -1090,7 +1090,7 @@ public class MainActivity extends AppCompatActivity {
                             }
                         });
                     } else {
-                        fragment.loadModel(f, project3mf, (model, firstNewObject, addedObjects) -> {
+                        fragment.loadModel(f, project3mf, projectImport != null ? projectImport.plateCount : 1, (model, firstNewObject, addedObjects) -> {
                             if (model == null || fragment.getGlView().getRenderer().getBed() == null) {
                                 return;
                             }

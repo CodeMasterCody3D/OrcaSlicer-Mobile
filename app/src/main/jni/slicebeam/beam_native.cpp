@@ -383,7 +383,7 @@ extern "C" {
         }
     }
 
-    JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1read_1from_1file(JNIEnv *env, jclass, jstring path, jstring base_name) {
+    JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1read_1from_1file(JNIEnv *env, jclass, jstring path, jstring base_name, jint plateId) {
         const char* chars = env->GetStringUTFChars(path, JNI_FALSE);
         const char* baseChars = env->GetStringUTFChars(base_name, JNI_FALSE);
 
@@ -394,7 +394,7 @@ extern "C" {
             if (boost::algorithm::iends_with(std::string(chars), ".3mf")) {
                 load_strategy = LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel;
             }
-            ref->model = Model::read_from_file(std::string(chars), nullptr, nullptr, load_strategy);
+            ref->model = Model::read_from_file(std::string(chars), nullptr, nullptr, load_strategy, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, plateId, nullptr);
             ref->base_name = std::string(baseChars);
         } catch (const Slic3r::RuntimeError& e) {
             env->ThrowNew(env->FindClass("ru/ytkab0bp/slicebeam/slic3r/Slic3rRuntimeError"), e.what());
