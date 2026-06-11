@@ -50,6 +50,8 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     private double[] modelMatrix = new double[16];
     private double[] normalMatrix = new double[12];
     private double[] outModelMatrix = new double[16];
+    private double[] cutPlaneModelMatrix = new double[16];
+    private double[] cutPlaneOutModelMatrix = new double[16];
 
     private int viewportWidth, viewportHeight;
 
@@ -87,6 +89,28 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     private boolean isInFlattenMode;
     private ArrayList<GLModel> flattenPlanes = new ArrayList<>();
 
+    private boolean cutPlaneVisible = false;
+    private float cutPlaneZ, cutPlaneRotX, cutPlaneRotY;
+    private Vec3d cutPlaneMin = new Vec3d();
+    private Vec3d cutPlaneMax = new Vec3d();
+    private boolean cutPlaneDirty = false;
+    private int cutPlaneVBO = -1;
+    private int cutPlaneVAO = -1;
+    private java.nio.FloatBuffer cutPlaneVertexBuffer;
+
+    public synchronized void setCutPlane(float z, float rotX, float rotY, Vec3d min, Vec3d max) {
+        cutPlaneZ = z;
+        cutPlaneRotX = rotX;
+        cutPlaneRotY = rotY;
+        cutPlaneMin.set(min.x, min.y, min.z);
+        cutPlaneMax.set(max.x, max.y, max.z);
+        cutPlaneDirty = true;
+    }
+
+    public synchronized void showCutPlane(boolean show) {
+        cutPlaneVisible = show;
+    }
+
     // --- Multi-color painting ---
     public static final int PAINT_TOOL_BRUSH = 0, PAINT_TOOL_BUCKET = 1, PAINT_TOOL_HEIGHT = 2;
     private static class PaintOverlay { GLModel model; int color; }
@@ -96,6 +120,9 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     private int paintFilament = 2;          // 1-based palette index; 1 = base, so default to first painted color
     private int paintTool = PAINT_TOOL_BRUSH;
     private double paintBrushRadius = 4.0;   // mm
+    private double heightBandWidth = 10.0; // mm
+    private double bucketAngleThreshold = 30.0; // degrees
+    private boolean brushSphere = false;
     private int[] paintPalette = new int[0];
     private final List<PaintOverlay> paintOverlays = new ArrayList<>();
     // Persisted painting per object (built from committed mmu data), so colors stay after exiting paint mode.
@@ -432,6 +459,10 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
                     flat.stopUsing();
 
+                    if (i == selectedObject && cutPlaneVisible) {
+                        drawCutPlane();
+                    }
+
                     shader.startUsing();
                 }
 
@@ -463,6 +494,113 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
+    }
+
+    private void drawCutPlane() {
+        float z;
+        float rotX;
+        float rotY;
+        Vec3d min = new Vec3d();
+        Vec3d max = new Vec3d();
+        boolean dirty;
+
+        synchronized (this) {
+            z = cutPlaneZ;
+            rotX = cutPlaneRotX;
+            rotY = cutPlaneRotY;
+            min.set(cutPlaneMin.x, cutPlaneMin.y, cutPlaneMin.z);
+            max.set(cutPlaneMax.x, cutPlaneMax.y, cutPlaneMax.z);
+            dirty = cutPlaneDirty;
+            cutPlaneDirty = false;
+        }
+
+        if (dirty || cutPlaneVBO == -1 || cutPlaneVAO == -1) {
+            float padding = 20.0f; // mm
+            float minX = (float) min.x - padding;
+            float maxX = (float) max.x + padding;
+            float minY = (float) min.y - padding;
+            float maxY = (float) max.y + padding;
+
+            float[] vertices = {
+                minX, minY, 0.0f,
+                maxX, minY, 0.0f,
+                maxX, maxY, 0.0f,
+                minX, maxY, 0.0f
+            };
+
+            if (cutPlaneVertexBuffer == null) {
+                java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocateDirect(vertices.length * 4);
+                bb.order(java.nio.ByteOrder.nativeOrder());
+                cutPlaneVertexBuffer = bb.asFloatBuffer();
+            }
+            cutPlaneVertexBuffer.clear();
+            cutPlaneVertexBuffer.put(vertices);
+            cutPlaneVertexBuffer.position(0);
+
+            if (cutPlaneVBO == -1) {
+                int[] buffers = new int[1];
+                glGenBuffers(1, buffers, 0);
+                cutPlaneVBO = buffers[0];
+            }
+            glBindBuffer(GL_ARRAY_BUFFER, cutPlaneVBO);
+            glBufferData(GL_ARRAY_BUFFER, vertices.length * 4, cutPlaneVertexBuffer, GL_STATIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+            if (cutPlaneVAO == -1) {
+                int[] vaos = new int[1];
+                glGenVertexArrays(1, vaos, 0);
+                cutPlaneVAO = vaos[0];
+            }
+            
+            GLShaderProgram flat = shadersManager.get(GLShadersManager.SHADER_FLAT);
+            int posLoc = flat.getAttribLocation("v_position");
+            
+            glBindVertexArray(cutPlaneVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, cutPlaneVBO);
+            glEnableVertexAttribArray(posLoc);
+            glVertexAttribPointer(posLoc, 3, GL_FLOAT, false, 3 * 4, 0);
+            glBindVertexArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        GLShaderProgram flat = shadersManager.get(GLShadersManager.SHADER_FLAT);
+        flat.startUsing();
+
+        System.arraycopy(modelMatrix, 0, cutPlaneModelMatrix, 0, 16);
+
+        DoubleMatrix.translateM(cutPlaneModelMatrix, 0, 0.0, 0.0, z);
+        DoubleMatrix.rotateM(cutPlaneModelMatrix, 0, Math.toDegrees(rotY), 0.0, 1.0, 0.0);
+        DoubleMatrix.rotateM(cutPlaneModelMatrix, 0, Math.toDegrees(rotX), 1.0, 0.0, 0.0);
+
+        double[] viewMatrix = camera.getViewModelMatrix();
+        DoubleMatrix.multiplyMM(cutPlaneOutModelMatrix, 0, viewMatrix, 0, cutPlaneModelMatrix, 0);
+
+        flat.setUniformMatrix4fv("view_model_matrix", cutPlaneOutModelMatrix);
+        flat.setUniformMatrix4fv("projection_matrix", projectionMatrix);
+        flat.setUniform4f("uniform_color", 1.0f, 1.0f, 1.0f, 0.3f);
+
+        boolean blendEnabled = glIsEnabled(GL_BLEND);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        glDepthMask(false);
+
+        boolean cullEnabled = glIsEnabled(GL_CULL_FACE);
+        glDisable(GL_CULL_FACE);
+
+        glBindVertexArray(cutPlaneVAO);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+        glBindVertexArray(0);
+
+        glDepthMask(true);
+        if (!blendEnabled) {
+            glDisable(GL_BLEND);
+        }
+        if (cullEnabled) {
+            glEnable(GL_CULL_FACE);
+        }
+
+        flat.stopUsing();
     }
 
     public boolean deleteObject(int i) {
@@ -621,6 +759,12 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     public void setPaintTool(int t) { paintTool = t; }
     public double getPaintBrushRadius() { return paintBrushRadius; }
     public void setPaintBrushRadius(double r) { paintBrushRadius = r; }
+    public double getHeightBandWidth() { return heightBandWidth; }
+    public void setHeightBandWidth(double w) { heightBandWidth = w; }
+    public double getBucketAngleThreshold() { return bucketAngleThreshold; }
+    public void setBucketAngleThreshold(double a) { bucketAngleThreshold = a; }
+    public boolean isBrushSphere() { return brushSphere; }
+    public void setBrushSphere(boolean s) { brushSphere = s; }
 
     public void beginPaint(int objIdx) {
         if (model == null || objIdx < 0 || objIdx >= model.getObjectsCount()) return;
@@ -671,12 +815,12 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         Vec3d hit = raycastHits.get(0).position;
         double[] h = new double[] { hit.x, hit.y, hit.z };
         if (paintTool == PAINT_TOOL_BUCKET) {
-            paintSession.bucket(h, -1, paintFilament, true, 30.0);
+            paintSession.bucket(h, -1, paintFilament, true, bucketAngleThreshold);
         } else if (paintTool == PAINT_TOOL_HEIGHT) {
-            // Paint everything up to the tapped height.
-            paintSession.height(-1e9, hit.z, paintFilament);
+            double halfW = heightBandWidth / 2.0;
+            paintSession.height(hit.z - halfW, hit.z + halfW, paintFilament);
         } else {
-            paintSession.brush(h, -1, paintBrushRadius, paintFilament, camera.position.asDoubleArray());
+            paintSession.brush(h, -1, paintBrushRadius, paintFilament, camera.position.asDoubleArray(), brushSphere);
         }
         // Don't commit on every drag event (expensive) — the live session overlays show the paint,
         // and endPaint() commits to the model. This keeps fast drags from painting sparsely.
@@ -1146,5 +1290,14 @@ public class GLRenderer implements GLSurfaceView.Renderer {
             flattenPlanes.get(i).release();
         }
         flattenPlanes.clear();
+
+        if (cutPlaneVBO != -1) {
+            glDeleteBuffers(1, new int[]{cutPlaneVBO}, 0);
+            cutPlaneVBO = -1;
+        }
+        if (cutPlaneVAO != -1) {
+            glDeleteVertexArrays(1, new int[]{cutPlaneVAO}, 0);
+            cutPlaneVAO = -1;
+        }
     }
 }

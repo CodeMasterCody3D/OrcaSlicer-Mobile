@@ -20,8 +20,8 @@ public class PaintSession {
         return Native.paint_raycast(ptr, origin, dir);
     }
 
-    public void brush(double[] hit, int facetStart, double radius, int filamentIdx, double[] cameraPos) {
-        Native.paint_brush(ptr, hit, facetStart, radius, filamentIdx, cameraPos);
+    public void brush(double[] hit, int facetStart, double radius, int filamentIdx, double[] cameraPos, boolean sphere) {
+        Native.paint_brush(ptr, hit, facetStart, radius, filamentIdx, cameraPos, sphere);
     }
 
     public void bucket(double[] hit, int facetStart, int filamentIdx, boolean propagate, double angle) {

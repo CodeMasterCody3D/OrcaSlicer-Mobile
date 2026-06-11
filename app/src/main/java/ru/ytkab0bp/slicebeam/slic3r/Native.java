@@ -212,7 +212,7 @@ public class Native {
     // ---- Multi-color painting (mmu segmentation) ----
     static native long paint_begin(long modelPtr, int objIdx);
     static native double[] paint_raycast(long sessionPtr, double[] origin, double[] dir);
-    static native void paint_brush(long sessionPtr, double[] hit, int facetStart, double radius, int filamentIdx, double[] cameraPos);
+    static native void paint_brush(long sessionPtr, double[] hit, int facetStart, double radius, int filamentIdx, double[] cameraPos, boolean sphere);
     static native void paint_bucket(long sessionPtr, double[] hit, int facetStart, int filamentIdx, boolean propagate, double angle);
     static native void paint_height(long sessionPtr, double zMin, double zMax, int filamentIdx);
     static native void paint_clear(long sessionPtr);

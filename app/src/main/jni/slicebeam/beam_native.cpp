@@ -1990,31 +1990,48 @@ extern "C" {
         return arr;
     }
 
-    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1brush(JNIEnv* env, jclass, jlong sessionPtr, jdoubleArray hitArr, jint facetStart, jdouble radius, jint filamentIdx, jdoubleArray cameraArr) {
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1brush(JNIEnv* env, jclass, jlong sessionPtr, jdoubleArray hitArr, jint facetStart, jdouble radius, jint filamentIdx, jdoubleArray cameraArr, jboolean sphere) {
         PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
         jdouble* h = env->GetDoubleArrayElements(hitArr, JNI_FALSE);
         Vec3f hit((float) h[0], (float) h[1], (float) h[2]);
         env->ReleaseDoubleArrayElements(hitArr, h, JNI_ABORT);
-        // cameraArr is currently unused (kept in the signature for a future view-aware brush).
-        // Paint whole original triangles (set_facet) — this produces clean per-region segmentation
-        // that reliably yields tool changes. To fix wall coverage (large triangles whose center is
-        // far from the brush), paint a triangle if its center OR any vertex is within the radius.
-        Slic3r::EnforcerBlockerType state = paint_state(filamentIdx);
-        const auto& its = s->mesh.its;
-        float r2 = (float) (radius * radius);
-        for (int i = 0; i < (int) its.indices.size(); ++i) {
-            const Vec3i32& tri = its.indices[i];
-            const Vec3f& a = its.vertices[tri[0]];
-            const Vec3f& b = its.vertices[tri[1]];
-            const Vec3f& c = its.vertices[tri[2]];
-            Vec3f centroid = (a + b + c) / 3.f;
-            if ((centroid - hit).squaredNorm() <= r2 ||
-                (a - hit).squaredNorm() <= r2 ||
-                (b - hit).squaredNorm() <= r2 ||
-                (c - hit).squaredNorm() <= r2) {
-                s->selector->set_facet(i, state);
-            }
+
+        jdouble* cam = env->GetDoubleArrayElements(cameraArr, JNI_FALSE);
+        Vec3d camera_pos_world((double) cam[0], (double) cam[1], (double) cam[2]);
+        env->ReleaseDoubleArrayElements(cameraArr, cam, JNI_ABORT);
+
+        ModelObject* obj = s->model->model.objects[s->objIdx];
+        Transform3d inst_matrix = Transform3d::Identity();
+        if (!obj->instances.empty() && obj->instances.front() != nullptr) {
+            inst_matrix = obj->instances.front()->get_matrix();
         }
+
+        // Convert camera position to local mesh space
+        Vec3d camera_pos_local = inst_matrix.inverse() * camera_pos_world;
+
+        Transform3d trafo_no_translate = inst_matrix;
+        trafo_no_translate.translation() = Vec3d::Zero();
+
+        Slic3r::EnforcerBlockerType state = paint_state(filamentIdx);
+
+        if (facetStart < 0) {
+            const auto& its = s->mesh.its;
+            float best = FLT_MAX; int bi = 0;
+            for (int i = 0; i < (int) its.indices.size(); ++i) {
+                const Vec3i32& t = its.indices[i];
+                Vec3f c = (its.vertices[t[0]] + its.vertices[t[1]] + its.vertices[t[2]]) / 3.f;
+                float d = (c - hit).squaredNorm();
+                if (d < best) { best = d; bi = i; }
+            }
+            facetStart = bi;
+        }
+
+        auto cursor = TriangleSelector::SinglePointCursor::cursor_factory(
+            hit, camera_pos_local.cast<float>(), (float)radius,
+            sphere ? TriangleSelector::CursorType::SPHERE : TriangleSelector::CursorType::CIRCLE,
+            inst_matrix, TriangleSelector::ClippingPlane());
+
+        s->selector->select_patch(facetStart, std::move(cursor), state, trafo_no_translate, true);
     }
 
     JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1bucket(JNIEnv* env, jclass, jlong sessionPtr, jdoubleArray hitArr, jint facetStart, jint filamentIdx, jboolean propagate, jdouble angle) {

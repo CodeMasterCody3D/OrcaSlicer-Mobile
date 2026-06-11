@@ -43,6 +43,11 @@ public class PaintModeView extends FrameLayout {
     private boolean brushActive = true;
 
     private TextView brushBtn, bucketBtn, heightBtn;
+    private TextView heightBandLabel;
+    private SeekBar heightBandWidthSeek;
+    private TextView bucketAngleLabel;
+    private SeekBar bucketAngleSeek;
+    private TextView brushTypeBtn;
 
     public PaintModeView(Context ctx, GLView glView, Runnable onExit) {
         super(ctx);
@@ -151,9 +156,66 @@ public class PaintModeView extends FrameLayout {
             @Override public void onStartTrackingTouch(SeekBar s) {}
             @Override public void onStopTrackingTouch(SeekBar s) {}
         });
-        panel.addView(brushSize, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+        // Brush type toggle (Circle / Sphere)
+        brushTypeBtn = new TextView(ctx);
+        brushTypeBtn.setGravity(Gravity.CENTER);
+        brushTypeBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        brushTypeBtn.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+        brushTypeBtn.setPadding(ViewUtils.dp(8), ViewUtils.dp(8), ViewUtils.dp(8), ViewUtils.dp(8));
+        updateBrushTypeBtnStyle();
+        brushTypeBtn.setOnClickListener(v -> {
+            runOnGl(() -> {
+                boolean s = !glView.getRenderer().isBrushSphere();
+                glView.getRenderer().setBrushSphere(s);
+                post(() -> {
+                    updateBrushTypeBtnStyle();
+                });
+            });
+        });
+        panel.addView(brushTypeBtn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(40)) {{
             bottomMargin = ViewUtils.dp(8);
         }});
+
+        // Height band label & seek
+        heightBandLabel = label(ctx, "Height band: 10.0 mm");
+        panel.addView(heightBandLabel, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        
+        heightBandWidthSeek = new SeekBar(ctx);
+        heightBandWidthSeek.setMax(100); // 1 to 100 mm
+        heightBandWidthSeek.setProgress(10);
+        heightBandWidthSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                double w = Math.max(1, p);
+                heightBandLabel.setText("Height band: " + String.format(java.util.Locale.US, "%.1f", w) + " mm");
+                runOnGl(() -> glView.getRenderer().setHeightBandWidth(w));
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        });
+        panel.addView(heightBandWidthSeek, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+            bottomMargin = ViewUtils.dp(8);
+        }});
+
+        // Bucket angle label & seek
+        bucketAngleLabel = label(ctx, "Angle limit: 30°");
+        panel.addView(bucketAngleLabel, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        bucketAngleSeek = new SeekBar(ctx);
+        bucketAngleSeek.setMax(90); // 1 to 90 degrees
+        bucketAngleSeek.setProgress(30);
+        bucketAngleSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                double a = Math.max(1, p);
+                bucketAngleLabel.setText("Angle limit: " + (int) a + "°");
+                runOnGl(() -> glView.getRenderer().setBucketAngleThreshold(a));
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        });
+        panel.addView(bucketAngleSeek, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+            bottomMargin = ViewUtils.dp(8);
+        }});
+
         selectTool(GLRenderer.PAINT_TOOL_BRUSH);
 
         // Clear + Done
@@ -207,11 +269,38 @@ public class PaintModeView extends FrameLayout {
         return t;
     }
 
+    private void updateBrushTypeBtnStyle() {
+        boolean sphere = false;
+        if (glView != null && glView.getRenderer() != null) {
+            sphere = glView.getRenderer().isBrushSphere();
+        }
+        brushTypeBtn.setText(sphere ? "Brush Type: Sphere (3D)" : "Brush Type: Circle (Projected)");
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(ViewUtils.dp(12));
+        bg.setColor(ThemesRepo.getColor(android.R.attr.colorControlHighlight));
+        brushTypeBtn.setBackground(bg);
+        brushTypeBtn.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+    }
+
     private void selectTool(int tool) {
         styleTool(brushBtn, tool == GLRenderer.PAINT_TOOL_BRUSH);
         styleTool(bucketBtn, tool == GLRenderer.PAINT_TOOL_BUCKET);
         styleTool(heightBtn, tool == GLRenderer.PAINT_TOOL_HEIGHT);
+        
         brushSize.setVisibility(tool == GLRenderer.PAINT_TOOL_BRUSH ? VISIBLE : GONE);
+        if (brushTypeBtn != null) {
+            brushTypeBtn.setVisibility(tool == GLRenderer.PAINT_TOOL_BRUSH ? VISIBLE : GONE);
+        }
+        
+        if (heightBandLabel != null && heightBandWidthSeek != null) {
+            heightBandLabel.setVisibility(tool == GLRenderer.PAINT_TOOL_HEIGHT ? VISIBLE : GONE);
+            heightBandWidthSeek.setVisibility(tool == GLRenderer.PAINT_TOOL_HEIGHT ? VISIBLE : GONE);
+        }
+        
+        if (bucketAngleLabel != null && bucketAngleSeek != null) {
+            bucketAngleLabel.setVisibility(tool == GLRenderer.PAINT_TOOL_BUCKET ? VISIBLE : GONE);
+            bucketAngleSeek.setVisibility(tool == GLRenderer.PAINT_TOOL_BUCKET ? VISIBLE : GONE);
+        }
     }
 
     private void styleTool(TextView t, boolean sel) {

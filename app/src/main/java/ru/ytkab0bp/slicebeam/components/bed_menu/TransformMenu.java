@@ -600,6 +600,29 @@ public class TransformMenu extends ListBedMenu {
         }
 
         @Override
+        protected void onCreate() {
+            super.onCreate();
+            TransformMenu.this.fragment.getGlView().getRenderer().showCutPlane(true);
+            updateCutPlaneInRenderer();
+        }
+
+        @Override
+        protected void onDestroy() {
+            super.onDestroy();
+            TransformMenu.this.fragment.getGlView().getRenderer().showCutPlane(false);
+            TransformMenu.this.fragment.getGlView().requestRender();
+        }
+
+        private void updateCutPlaneInRenderer() {
+            if (zTrack == null || rotXTrack == null || rotYTrack == null) return;
+            float z = (float) (zTrack.getCurrentPosition() / 100.0f);
+            float rotXRad = (float) Math.toRadians(rotXTrack.getCurrentPosition() / 100.0f);
+            float rotYRad = (float) Math.toRadians(rotYTrack.getCurrentPosition() / 100.0f);
+            TransformMenu.this.fragment.getGlView().getRenderer().setCutPlane(z, rotXRad, rotYRad, tempVec, tempVec2);
+            TransformMenu.this.fragment.getGlView().requestRender();
+        }
+
+        @Override
         protected View onCreateView(Context ctx, boolean portrait) {
             LinearLayout ll = new LinearLayout(ctx);
             ll.setOrientation(LinearLayout.VERTICAL);
@@ -619,7 +642,10 @@ public class TransformMenu extends ListBedMenu {
             zTrack.setActiveColor(R.attr.zTrackColor);
             zTrack.setMinMax((int)(minZ * 100), (int)(maxZ * 100));
             zTrack.setCurrentPosition((int)(midZ * 100));
-            zTrack.setListener(integer -> zTitle.setText("Z = " + String.format(java.util.Locale.US, "%.2f", integer / 100.0) + " mm"));
+            zTrack.setListener(integer -> {
+                zTitle.setText("Z = " + String.format(java.util.Locale.US, "%.2f", integer / 100.0) + " mm");
+                updateCutPlaneInRenderer();
+            });
             ll.addView(zTrack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(80)));
 
             rotXTitle = new TextView(ctx);
@@ -636,7 +662,10 @@ public class TransformMenu extends ListBedMenu {
             rotXTrack.setActiveColor(R.attr.xTrackColor);
             rotXTrack.setMinMax(-18000, 18000);
             rotXTrack.setCurrentPosition(0);
-            rotXTrack.setListener(integer -> rotXTitle.setText("Rotate X = " + (integer / 100) + "°"));
+            rotXTrack.setListener(integer -> {
+                rotXTitle.setText("Rotate X = " + (integer / 100) + "°");
+                updateCutPlaneInRenderer();
+            });
             ll.addView(rotXTrack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(80)));
 
             rotYTitle = new TextView(ctx);
@@ -653,7 +682,10 @@ public class TransformMenu extends ListBedMenu {
             rotYTrack.setActiveColor(R.attr.yTrackColor);
             rotYTrack.setMinMax(-18000, 18000);
             rotYTrack.setCurrentPosition(0);
-            rotYTrack.setListener(integer -> rotYTitle.setText("Rotate Y = " + (integer / 100) + "°"));
+            rotYTrack.setListener(integer -> {
+                rotYTitle.setText("Rotate Y = " + (integer / 100) + "°");
+                updateCutPlaneInRenderer();
+            });
             ll.addView(rotYTrack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(80)));
 
             android.widget.Button applyBtn = new android.widget.Button(ctx);
