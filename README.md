@@ -1,40 +1,52 @@
 # OrcaSlicer Mobile
 
-OrcaSlicer Mobile is an Android slicer project bootstrapped from [Slice Beam](https://github.com/utkabobr/SliceBeam), which itself is based on PrusaSlicer/Slic3r technology.
+A 3D printing slicer for Android, powered by the real **OrcaSlicer** engine.
 
-## Current status
+OrcaSlicer Mobile takes the excellent Android slicer shell from [Slice Beam](https://github.com/ytkab0bp/SliceBeam) and replaces its slicing core with a full port of [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer)'s `libslic3r` — so the G-code you slice on your phone comes from the same engine you use on the desktop.
 
-This repository is in the **bootstrap** phase. The immediate goal is to create a working Android slicer shell with OrcaSlicer-compatible profile handling, then iteratively replace inherited Slice Beam/Beam-specific services and validate current OrcaSlicer preset compatibility.
+## Features
 
-## Why this base
+- **Full OrcaSlicer slicing engine** running natively on-device: Arachne wall generator, tree supports, seam control, adaptive layers, and the rest of the Orca feature set
+- **OrcaSlicer profile import** — load `.orca_printer` / `.orca_filament` config bundles, including profile inheritance resolution and automatic download of vendor base profiles
+- **Multi-color painting** — paint models with brush, bucket-fill, and height-range tools from a palette of up to 16 filaments; sliced output gets proper tool changes, a prime tower, and per-filament flush volumes
+- **G-code preview** with feature-type and filament/tool color views
+- **Profile editor** with OrcaSlicer setting names and categories
+- **3MF / STL / STEP / OBJ model import**, transform tools, auto-arrange, cut tool, auto-orient
+- **Fully offline** — no account, no cloud, no telemetry
 
-Slice Beam already provides the hard Android-specific pieces that a direct desktop OrcaSlicer port would need:
+## Install
 
-- Android Java UI for model loading, printer/profile setup, slicing, and G-code export
-- JNI bridge into a native slicer core
-- OpenGL preview/G-code visualization integration
-- Existing `.orca_printer` config-bundle import and inheritance flattening
-- Android Gradle/CMake project layout
+Download the latest APK from the [Releases](../../releases) page and sideload it (you may need to allow "install from unknown sources").
 
-## Bootstrap rules
+Requirements: Android 5.0+, 64-bit ARM device (arm64-v8a).
 
-For the first milestone, the Java package path remains `ru.ytkab0bp.slicebeam` because native JNI method names are tied to that package. Renaming Java packages comes later after the app builds and native bridge tests are in place.
+## Build from source
 
-The Android `applicationId` is already changed to:
-
-```text
-com.codemastercody3d.orcaslicermobile
+```bash
+git clone https://github.com/CodeMasterCody3D/OrcaSlicer-Mobile.git
+cd OrcaSlicer-Mobile
+./gradlew assembleDebug
 ```
 
-## Known inherited areas to replace or audit
+- Android SDK 35, NDK `23.1.7779620`
+- The native engine (libslic3r + dependencies) builds via CMake on the first build — expect it to take a while
+- Prebuilt native dependencies not stored in git (Boost, oneTBB, OCCT, GMP/MPFR) are expected under `app/src/main/jniImports/` and `app/src/main/occt/`
+- The output APK lands in `app/build/outputs/apk/debug/`
 
-- Beam/SliceBeam cloud endpoints
-- Beam server data/update feed
-- Boosty/Telegram/K3D support links
-- Prusa preset repository setup flow
-- Slice Beam-specific copy and UI labels
-- Native deps not stored in git: Boost, oneTBB, OCCT, GMP/MPFR binaries
+Note: the Java package path remains `ru.ytkab0bp.slicebeam` for now because native JNI method names are tied to it; the `applicationId` is `com.codemastercody3d.orcaslicermobile`.
 
-## License and attribution
+## Credits
 
-This project preserves the upstream AGPLv3 licensing requirements inherited from Slice Beam, PrusaSlicer, and Slic3r. Source availability and attribution must be maintained for distributed APKs.
+This project stands on the shoulders of:
+
+- [Slice Beam](https://github.com/ytkab0bp/SliceBeam) by ytkab0bp — the Android shell, JNI bridge, and OpenGL preview this project is built on
+- [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) by SoftFever — the slicing engine
+- [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) / Slic3r and [Bambu Studio](https://github.com/bambulab/BambuStudio), which OrcaSlicer is built upon
+
+## Status
+
+Experimental / alpha. Sliced output should always be sanity-checked in the G-code preview before printing. Issues and feedback are welcome.
+
+## License
+
+[AGPL-3.0](LICENSE), same as the projects it derives from. Source availability and attribution must be maintained for distributed APKs.
