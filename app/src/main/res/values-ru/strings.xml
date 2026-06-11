@@ -105,6 +105,7 @@
     <string name="MenuTransformScaleZValue">Z = %1$.2f %% | %2$.2f мм</string>
     <string name="MenuTransformScaleMM">Ввод в мм</string>
     <string name="MenuTransformMirror">Отразить</string>
+    <string name="MenuTransformPaint">Покраска</string>
     <string name="MenuTransformMirrorX">Отразить по X</string>
     <string name="MenuTransformMirrorY">Отразить по Y</string>
     <string name="MenuTransformMirrorZ">Отразить по Z</string>

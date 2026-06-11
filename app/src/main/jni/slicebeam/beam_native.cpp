@@ -1,6 +1,7 @@
 #include <android/log.h>
 #include <typeinfo>
 #include <set>
+#include <algorithm>
 
 #include <thread>
 
@@ -473,14 +474,90 @@ extern "C" {
         return arr;
     }
 
+    static bool is_unprocessed_cut_connector(const ModelVolume* volume) {
+        return volume != nullptr && volume->cut_info.is_connector && !volume->cut_info.is_processed;
+    }
+
+    static CutConnectorType connector_type_from_int(jint type) {
+        switch (type) {
+            case 1: return CutConnectorType::Dowel;
+            case 2: return CutConnectorType::Snap;
+            case 0:
+            default: return CutConnectorType::Plug;
+        }
+    }
+
+    static void add_cut_connector_volume(ModelObject* object, const Vec3d& pos, float radius, float height, jint type, double rotX, double rotY) {
+        if (object == nullptr) return;
+        radius = std::max(radius, 0.1f);
+        height = std::max(height, 0.1f);
+
+        CutConnectorType connector_type = connector_type_from_int(type);
+        TriangleMesh mesh = make_cylinder(1.0, 1.0, PI / 18.0);
+        ModelVolume* volume = object->add_volume(std::move(mesh), ModelVolumeType::NEGATIVE_VOLUME, false);
+        if (volume == nullptr) return;
+
+        Transform3d rotation_m = Transform3d::Identity();
+        rotation_m.rotate(Eigen::AngleAxisd(rotY, Vec3d::UnitY()));
+        rotation_m.rotate(Eigen::AngleAxisd(rotX, Vec3d::UnitX()));
+        volume->set_transformation(rotation_m);
+        volume->set_offset(pos);
+        volume->set_scaling_factor(Vec3d(radius, radius, height));
+        volume->cut_info = ModelVolume::CutInfo(connector_type, 0.05f, 0.10f, false);
+        volume->name = connector_type == CutConnectorType::Dowel ? "Cut Dowel" : (connector_type == CutConnectorType::Snap ? "Cut Snap" : "Cut Plug");
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1add_1connector(JNIEnv* env, jclass, jlong ptr, jint objIdx, jdouble x, jdouble y, jdouble z, jfloat radius, jfloat height, jint type) {
+        ModelRef* model = (ModelRef *) (intptr_t) ptr;
+        if (model == nullptr || objIdx < 0 || objIdx >= model->model.objects.size()) return;
+        add_cut_connector_volume(model->model.objects[objIdx], Vec3d(x, y, z), radius, height, type, 0.0, 0.0);
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1add_1connector_1on_1plane(JNIEnv* env, jclass, jlong ptr, jint objIdx, jdouble x, jdouble y, jdouble z, jfloat radius, jfloat height, jint type, jdouble rotX, jdouble rotY) {
+        ModelRef* model = (ModelRef *) (intptr_t) ptr;
+        if (model == nullptr || objIdx < 0 || objIdx >= model->model.objects.size()) return;
+        add_cut_connector_volume(model->model.objects[objIdx], Vec3d(x, y, z), radius, height, type, rotX, rotY);
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1remove_1connector(JNIEnv* env, jclass, jlong ptr, jint objIdx, jint connIdx) {
+        ModelRef* model = (ModelRef *) (intptr_t) ptr;
+        if (model == nullptr || objIdx < 0 || objIdx >= model->model.objects.size() || connIdx < 0) return;
+        ModelObject* object = model->model.objects[objIdx];
+        int connector_counter = 0;
+        for (int volume_idx = 0; volume_idx < object->volumes.size(); ++volume_idx) {
+            if (!is_unprocessed_cut_connector(object->volumes[volume_idx])) continue;
+            if (connector_counter == connIdx) {
+                object->delete_volume(volume_idx);
+                return;
+            }
+            ++connector_counter;
+        }
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1clear_1connectors(JNIEnv* env, jclass, jlong ptr, jint objIdx) {
+        ModelRef* model = (ModelRef *) (intptr_t) ptr;
+        if (model == nullptr || objIdx < 0 || objIdx >= model->model.objects.size()) return;
+        ModelObject* object = model->model.objects[objIdx];
+        for (int volume_idx = int(object->volumes.size()) - 1; volume_idx >= 0; --volume_idx) {
+            if (is_unprocessed_cut_connector(object->volumes[volume_idx])) {
+                object->delete_volume(volume_idx);
+            }
+        }
+    }
+
     JNIEXPORT jboolean JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1cut(JNIEnv* env, jclass, jlong ptr, jint i, jdouble zHeight, jdouble rotX, jdouble rotY, jboolean keepUpper, jboolean keepLower) {
-        auto model = (Model*)ptr;
-        if (model == nullptr || i < 0 || i >= model->objects.size()) {
+        ModelRef* modelRef = (ModelRef *) (intptr_t) ptr;
+        if (modelRef == nullptr) {
+            LOGD("Cut failed: null model");
+            return false;
+        }
+        Model& model = modelRef->model;
+        if (i < 0 || i >= model.objects.size()) {
             LOGD("Cut failed: invalid model or index %d", i);
             return false;
         }
         
-        auto object = model->objects[i];
+        auto object = model.objects[i];
         auto bbox = object->bounding_box_exact();
         LOGD("Cut invoked: index=%d zHeight=%f rotX=%f rotY=%f. Object bounds Z: min=%f, max=%f", i, zHeight, rotX, rotY, bbox.min.z(), bbox.max.z());
         
@@ -489,7 +566,7 @@ extern "C" {
         cut_matrix.rotate(Eigen::AngleAxisd(rotY, Vec3d::UnitY()));
         cut_matrix.rotate(Eigen::AngleAxisd(rotX, Vec3d::UnitX()));
         
-        ModelObjectCutAttributes attributes = ModelObjectCutAttribute::InvalidateCutInfo;
+        ModelObjectCutAttributes attributes = ModelObjectCutAttribute::InvalidateCutInfo | ModelObjectCutAttribute::CreateDowels;
         if (keepUpper) attributes = attributes | ModelObjectCutAttribute::KeepUpper;
         if (keepLower) attributes = attributes | ModelObjectCutAttribute::KeepLower;
         
@@ -508,10 +585,10 @@ extern "C" {
                 cut_obj->translate(Vec3d(20.0, 20.0, 10.0));
                 isFirst = false;
             }
-            model->add_object(*cut_obj);
+            model.add_object(*cut_obj);
         }
         
-        model->delete_object(i);
+        model.delete_object(i);
         
         return true;
     }
@@ -911,6 +988,12 @@ extern "C" {
             config.load(std::string(chars), ForwardCompatibilitySubstitutionRule::Disable);
             env->ReleaseStringUTFChars(configPath, chars);
             config.normalize_fdm();
+
+            // The app's bed temperatures live in the hot-plate slots (legacy bed_temperature keys
+            // migrate to hot_plate_temp); the engine reads the slot picked by curr_bed_type, whose
+            // compiled default is Cool Plate — which would silently ignore those values.
+            if (config.option("curr_bed_type", false) == nullptr)
+                config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPEI));
 
             // Multi-color: declare N filaments (resizing all filament vectors) + their colors so the
             // engine runs MMU segmentation on the painted facets and emits tool changes.

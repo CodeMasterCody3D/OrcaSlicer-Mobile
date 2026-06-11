@@ -150,6 +150,7 @@ public class ConfigObject implements ProfileListFragment.ProfileListItem {
         m.put("extruder_clearance_height", "extruder_clearance_height_to_rod");
         m.put("fuzzy_skin_point_dist", "fuzzy_skin_point_distance");
         m.put("output_filename_format", "filename_format");
+        m.put("xy_size_compensation", "xy_contour_compensation");
         m.put("machine_max_feedrate_x", "machine_max_speed_x");
         m.put("machine_max_feedrate_y", "machine_max_speed_y");
         m.put("machine_max_feedrate_z", "machine_max_speed_z");

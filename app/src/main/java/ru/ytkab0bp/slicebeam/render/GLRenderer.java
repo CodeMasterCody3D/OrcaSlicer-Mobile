@@ -98,6 +98,63 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     private int cutPlaneVAO = -1;
     private java.nio.FloatBuffer cutPlaneVertexBuffer;
 
+    private static class CutConnectorPreview {
+        Vec3d position;
+        float radius, height;
+        int type;
+        double rotX, rotY;
+    }
+
+    private final java.util.Map<Integer, List<CutConnectorPreview>> cutConnectorPreviews = new java.util.HashMap<>();
+    private boolean cutConnectorPlacement = false;
+    private float cutConnectorRadius = 5.0f;
+    private float cutConnectorHeight = 10.0f;
+    private int cutConnectorType = 0;
+    private boolean cutConnectorsDirty = true;
+    private int cutConnectorsVBO = -1;
+    private int cutConnectorsVAO = -1;
+    private int cutConnectorsVertexCount = 0;
+    private java.nio.FloatBuffer cutConnectorsVertexBuffer;
+
+    public synchronized void setCutConnectorPlacement(boolean enabled) {
+        cutConnectorPlacement = enabled;
+    }
+
+    public synchronized void setCutConnectorDefaults(float radius, float height, int type) {
+        cutConnectorRadius = Math.max(0.1f, radius);
+        cutConnectorHeight = Math.max(0.1f, height);
+        cutConnectorType = Math.max(0, Math.min(2, type));
+    }
+
+    public synchronized void clearCutConnectorsForObject(int objIdx) {
+        List<CutConnectorPreview> list = cutConnectorPreviews.remove(objIdx);
+        if (list != null) cutConnectorsDirty = true;
+        if (model != null && objIdx >= 0 && objIdx < model.getObjectsCount()) {
+            model.clearConnectors(objIdx);
+        }
+    }
+
+    public synchronized void removeLastCutConnectorForObject(int objIdx) {
+        List<CutConnectorPreview> list = cutConnectorPreviews.get(objIdx);
+        if (list == null || list.isEmpty()) return;
+        int idx = list.size() - 1;
+        list.remove(idx);
+        if (model != null && objIdx >= 0 && objIdx < model.getObjectsCount()) {
+            model.removeConnector(objIdx, idx);
+        }
+        cutConnectorsDirty = true;
+    }
+
+    public synchronized int getCutConnectorCount(int objIdx) {
+        List<CutConnectorPreview> list = cutConnectorPreviews.get(objIdx);
+        return list == null ? 0 : list.size();
+    }
+
+    public synchronized void clearAllCutConnectorPreviews() {
+        cutConnectorPreviews.clear();
+        cutConnectorsDirty = true;
+    }
+
     public synchronized void setCutPlane(float z, float rotX, float rotY, Vec3d min, Vec3d max) {
         cutPlaneZ = z;
         cutPlaneRotX = rotX;
@@ -109,6 +166,7 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
     public synchronized void showCutPlane(boolean show) {
         cutPlaneVisible = show;
+        if (!show) cutConnectorPlacement = false;
     }
 
     // --- Multi-color painting ---
@@ -419,9 +477,8 @@ public class GLRenderer implements GLSurfaceView.Renderer {
                 boolean paintingThis = paintMode && i == paintObject;
                 // While painting, show the live session overlays; otherwise the persisted committed ones.
                 List<PaintOverlay> overlays = paintingThis ? paintOverlays : getCommittedOverlays(i);
-                // The unpainted model always shows the T0 (filament 1) color; painted areas overlay on top.
                 int baseColor = paintPalette.length > 0 ? paintPalette[0] : color;
-                glModel.setColor(ColorUtils.blendARGB(baseColor, hoverColor, hovering ? 1 : 0));
+                glModel.setColor(ColorUtils.blendARGB(baseColor, Color.WHITE, hovering ? 0.4f : 0f));
                 glModel.render();
 
                 if (!overlays.isEmpty()) {
@@ -429,7 +486,7 @@ public class GLRenderer implements GLSurfaceView.Renderer {
                     glEnable(GL_POLYGON_OFFSET_FILL);
                     glPolygonOffset(-1f, -1f);
                     for (PaintOverlay o : overlays) {
-                        o.model.setColor(o.color);
+                        o.model.setColor(ColorUtils.blendARGB(o.color, Color.WHITE, hovering ? 0.4f : 0f));
                         o.model.render();
                     }
                     glPolygonOffset(0f, 0f);
@@ -461,6 +518,7 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
                     if (i == selectedObject && cutPlaneVisible) {
                         drawCutPlane();
+                        drawCutConnectors();
                     }
 
                     shader.startUsing();
@@ -494,6 +552,193 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
+    }
+
+    private Vec3d rotatedCutPlaneVector(double x, double y, double z, double rotX, double rotY) {
+        double[] m = new double[16];
+        double[] in = new double[] {x, y, z, 0.0};
+        double[] out = new double[4];
+        DoubleMatrix.setIdentityM(m, 0);
+        DoubleMatrix.rotateM(m, 0, Math.toDegrees(rotY), 0.0, 1.0, 0.0);
+        DoubleMatrix.rotateM(m, 0, Math.toDegrees(rotX), 1.0, 0.0, 0.0);
+        DoubleMatrix.multiplyMV(out, 0, m, 0, in, 0);
+        return new Vec3d(out[0], out[1], out[2]).normalize();
+    }
+
+    private Vec3d raycastCutPlane(float x, float y) {
+        float z, rotX, rotY;
+        Vec3d min = new Vec3d();
+        Vec3d max = new Vec3d();
+        synchronized (this) {
+            if (!cutPlaneVisible) return null;
+            z = cutPlaneZ;
+            rotX = cutPlaneRotX;
+            rotY = cutPlaneRotY;
+            min.set(cutPlaneMin.x, cutPlaneMin.y, cutPlaneMin.z);
+            max.set(cutPlaneMax.x, cutPlaneMax.y, cutPlaneMax.z);
+        }
+
+        Vec3d point = Slic3rUtils.unproject(camera.getViewModelMatrix(), projectionMatrix, viewportWidth, viewportHeight, x, y);
+        Vec3d direction = camera.getDirForward().clone();
+        if (!Prefs.isOrthoProjectionEnabled()) {
+            direction = point.clone().add(camera.position.clone().negate()).normalize();
+        }
+
+        Vec3d planePoint = new Vec3d(0.0, 0.0, z);
+        Vec3d normal = rotatedCutPlaneVector(0.0, 0.0, 1.0, rotX, rotY);
+        double denom = normal.x * direction.x + normal.y * direction.y + normal.z * direction.z;
+        if (Math.abs(denom) < 1e-8) return null;
+        double t = ((planePoint.x - point.x) * normal.x + (planePoint.y - point.y) * normal.y + (planePoint.z - point.z) * normal.z) / denom;
+        if (t < 0) return null;
+
+        Vec3d hit = point.clone().add(direction.clone().multiply(t));
+        double[] cutMatrix = new double[16];
+        double[] inverse = new double[16];
+        double[] local = new double[4];
+        DoubleMatrix.setIdentityM(cutMatrix, 0);
+        DoubleMatrix.translateM(cutMatrix, 0, 0.0, 0.0, z);
+        DoubleMatrix.rotateM(cutMatrix, 0, Math.toDegrees(rotY), 0.0, 1.0, 0.0);
+        DoubleMatrix.rotateM(cutMatrix, 0, Math.toDegrees(rotX), 1.0, 0.0, 0.0);
+        if (!DoubleMatrix.invertM(inverse, 0, cutMatrix, 0)) return null;
+        DoubleMatrix.multiplyMV(local, 0, inverse, 0, new double[] {hit.x, hit.y, hit.z, 1.0}, 0);
+
+        double padding = 20.0;
+        if (local[0] < min.x - padding || local[0] > max.x + padding || local[1] < min.y - padding || local[1] > max.y + padding) {
+            return null;
+        }
+        return hit;
+    }
+
+    private boolean tryAddCutConnector(float x, float y) {
+        boolean enabled;
+        float radius, height;
+        int type;
+        synchronized (this) {
+            enabled = cutConnectorPlacement;
+            radius = cutConnectorRadius;
+            height = cutConnectorHeight;
+            type = cutConnectorType;
+        }
+        if (!enabled || model == null || selectedObject < 0 || selectedObject >= model.getObjectsCount()) return false;
+        Vec3d hit = raycastCutPlane(x, y);
+        if (hit == null) return false;
+
+        model.addConnector(selectedObject, hit, radius, height, type, cutPlaneRotX, cutPlaneRotY);
+        CutConnectorPreview preview = new CutConnectorPreview();
+        preview.position = hit;
+        preview.radius = radius;
+        preview.height = height;
+        preview.type = type;
+        preview.rotX = cutPlaneRotX;
+        preview.rotY = cutPlaneRotY;
+        synchronized (this) {
+            List<CutConnectorPreview> list = cutConnectorPreviews.get(selectedObject);
+            if (list == null) {
+                list = new ArrayList<>();
+                cutConnectorPreviews.put(selectedObject, list);
+            }
+            list.add(preview);
+            cutConnectorsDirty = true;
+        }
+        return true;
+    }
+
+    private void addLine(List<Float> vertices, Vec3d a, Vec3d b) {
+        vertices.add((float) a.x); vertices.add((float) a.y); vertices.add((float) a.z);
+        vertices.add((float) b.x); vertices.add((float) b.y); vertices.add((float) b.z);
+    }
+
+    private void drawCutConnectors() {
+        List<CutConnectorPreview> previews;
+        boolean dirty;
+        synchronized (this) {
+            previews = cutConnectorPreviews.get(selectedObject);
+            if (previews == null || previews.isEmpty()) return;
+            previews = new ArrayList<>(previews);
+            dirty = cutConnectorsDirty;
+            cutConnectorsDirty = false;
+        }
+
+        if (dirty || cutConnectorsVBO == -1 || cutConnectorsVAO == -1) {
+            ArrayList<Float> vertices = new ArrayList<>();
+            final int segments = 32;
+            for (CutConnectorPreview c : previews) {
+                Vec3d bx = rotatedCutPlaneVector(1.0, 0.0, 0.0, c.rotX, c.rotY);
+                Vec3d by = rotatedCutPlaneVector(0.0, 1.0, 0.0, c.rotX, c.rotY);
+                Vec3d bn = rotatedCutPlaneVector(0.0, 0.0, 1.0, c.rotX, c.rotY);
+                Vec3d half = bn.clone().multiply(c.height * 0.5);
+                Vec3d bottomCenter = c.position.clone().add(half.clone().negate());
+                Vec3d topCenter = c.position.clone().add(half);
+                Vec3d firstBottom = null, firstTop = null, prevBottom = null, prevTop = null;
+                for (int s = 0; s <= segments; s++) {
+                    double a = 2.0 * Math.PI * s / segments;
+                    Vec3d radial = bx.clone().multiply(Math.cos(a) * c.radius).add(by.clone().multiply(Math.sin(a) * c.radius));
+                    Vec3d bottom = bottomCenter.clone().add(radial);
+                    Vec3d top = topCenter.clone().add(radial.clone());
+                    if (s == 0) {
+                        firstBottom = bottom;
+                        firstTop = top;
+                    } else {
+                        addLine(vertices, prevBottom, bottom);
+                        addLine(vertices, prevTop, top);
+                        if (s % 8 == 0) addLine(vertices, bottom, top);
+                    }
+                    prevBottom = bottom;
+                    prevTop = top;
+                }
+                if (firstBottom != null && firstTop != null) {
+                    addLine(vertices, firstBottom, firstTop);
+                    addLine(vertices, c.position.clone().add(bx.clone().multiply(-c.radius)), c.position.clone().add(bx.clone().multiply(c.radius)));
+                    addLine(vertices, c.position.clone().add(by.clone().multiply(-c.radius)), c.position.clone().add(by.clone().multiply(c.radius)));
+                }
+            }
+
+            cutConnectorsVertexCount = vertices.size() / 3;
+            if (cutConnectorsVertexCount == 0) return;
+            if (cutConnectorsVertexBuffer == null || cutConnectorsVertexBuffer.capacity() < vertices.size()) {
+                java.nio.ByteBuffer bb = java.nio.ByteBuffer.allocateDirect(vertices.size() * 4);
+                bb.order(java.nio.ByteOrder.nativeOrder());
+                cutConnectorsVertexBuffer = bb.asFloatBuffer();
+            }
+            cutConnectorsVertexBuffer.clear();
+            for (Float f : vertices) cutConnectorsVertexBuffer.put(f);
+            cutConnectorsVertexBuffer.position(0);
+
+            if (cutConnectorsVBO == -1) {
+                int[] buffers = new int[1];
+                glGenBuffers(1, buffers, 0);
+                cutConnectorsVBO = buffers[0];
+            }
+            glBindBuffer(GL_ARRAY_BUFFER, cutConnectorsVBO);
+            glBufferData(GL_ARRAY_BUFFER, vertices.size() * 4, cutConnectorsVertexBuffer, GL_STATIC_DRAW);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+            if (cutConnectorsVAO == -1) {
+                int[] vaos = new int[1];
+                glGenVertexArrays(1, vaos, 0);
+                cutConnectorsVAO = vaos[0];
+            }
+
+            GLShaderProgram flat = shadersManager.get(GLShadersManager.SHADER_FLAT);
+            int posLoc = flat.getAttribLocation("v_position");
+            glBindVertexArray(cutConnectorsVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, cutConnectorsVBO);
+            glEnableVertexAttribArray(posLoc);
+            glVertexAttribPointer(posLoc, 3, GL_FLOAT, false, 3 * 4, 0);
+            glBindVertexArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        GLShaderProgram flat = shadersManager.get(GLShadersManager.SHADER_FLAT);
+        flat.startUsing();
+        flat.setUniformMatrix4fv("view_model_matrix", camera.getViewModelMatrix());
+        flat.setUniformMatrix4fv("projection_matrix", projectionMatrix);
+        flat.setUniform4f("uniform_color", 1.0f, 0.65f, 0.10f, 0.95f);
+        glLineWidth(ViewUtils.dp(2.0f));
+        glBindVertexArray(cutConnectorsVAO);
+        glDrawArrays(GL_LINES, 0, cutConnectorsVertexCount);
+        glBindVertexArray(0);
+        flat.stopUsing();
     }
 
     private void drawCutPlane() {
@@ -921,6 +1166,8 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     public boolean onClick(float x, float y) {
         if (model == null || isViewerEnabled) return false;
 
+        if (tryAddCutConnector(x, y)) return true;
+
         int j = raycastObjectIndex(x, y);
 
         if (isInFlattenMode && (j == selectedObject || j == -1)) {
@@ -1260,6 +1507,7 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     public void onDestroy() {
         endPaintInternal(false);
         clearAllCommittedOverlays();
+        clearAllCutConnectorPreviews();
         if (shadersManager != null) {
             shadersManager.clearShaders();
             shadersManager = null;
@@ -1298,6 +1546,14 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         if (cutPlaneVAO != -1) {
             glDeleteVertexArrays(1, new int[]{cutPlaneVAO}, 0);
             cutPlaneVAO = -1;
+        }
+        if (cutConnectorsVBO != -1) {
+            glDeleteBuffers(1, new int[]{cutConnectorsVBO}, 0);
+            cutConnectorsVBO = -1;
+        }
+        if (cutConnectorsVAO != -1) {
+            glDeleteVertexArrays(1, new int[]{cutConnectorsVAO}, 0);
+            cutConnectorsVAO = -1;
         }
     }
 }

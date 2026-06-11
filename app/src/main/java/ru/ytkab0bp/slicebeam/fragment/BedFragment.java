@@ -190,8 +190,7 @@ public class BedFragment extends Fragment {
                         ctx.getString(R.string.ModelContextResetScale),
                         ctx.getString(R.string.ModelContextSetOnFace),
                         ctx.getString(R.string.ModelContextSelectAll),
-                        ctx.getString(R.string.ModelContextDeleteAll),
-                        "Paint colors"
+                        ctx.getString(R.string.ModelContextDeleteAll)
                 }, (dialog, which) -> {
                     switch (which) {
                         case 0: // Duplicate
@@ -276,9 +275,6 @@ public class BedFragment extends Fragment {
                                 Toast.makeText(ctx, R.string.ModelContextDeletedAll, Toast.LENGTH_SHORT).show();
                             });
                             break;
-                        case 10: // Paint colors
-                            enterPaintMode(objectIndex);
-                            break;
                     }
                 })
                 .setNegativeButton(android.R.string.cancel, null)
@@ -305,7 +301,7 @@ public class BedFragment extends Fragment {
                 .show();
     }
 
-    private void enterPaintMode(int objectIndex) {
+    public void enterPaintMode(int objectIndex) {
         Context ctx = getContext();
         if (ctx == null || glView == null || objectIndex == -1 || paintModeView != null) return;
         glView.queueEvent(() -> {

@@ -1,16 +1,9 @@
 package ru.ytkab0bp.slicebeam;
 
-import static android.opengl.GLES30.GL_COLOR_BUFFER_BIT;
-import static android.opengl.GLES30.GL_DEPTH_BUFFER_BIT;
-import static android.opengl.GLES30.GL_DEPTH_TEST;
-import static android.opengl.GLES30.glClear;
-import static android.opengl.GLES30.glClearColor;
-import static android.opengl.GLES30.glDisable;
-import static android.opengl.GLES30.glEnable;
-import static android.opengl.GLES30.glViewport;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.app.Activity;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
@@ -21,7 +14,6 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
-import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.SpannableStringBuilder;
@@ -30,7 +22,6 @@ import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
-import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -61,9 +52,14 @@ import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 import com.loopj.android.http.AsyncHttpClient;
 import com.loopj.android.http.AsyncHttpResponseHandler;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -76,13 +72,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-import javax.microedition.khronos.egl.EGLConfig;
-import javax.microedition.khronos.opengles.GL10;
 
 import cz.msebera.android.httpclient.Header;
 import ru.ytkab0bp.eventbus.EventHandler;
@@ -100,9 +95,7 @@ import ru.ytkab0bp.slicebeam.recycler.PreferenceItem;
 import ru.ytkab0bp.slicebeam.recycler.SimpleRecyclerAdapter;
 import ru.ytkab0bp.slicebeam.recycler.SimpleRecyclerItem;
 import ru.ytkab0bp.slicebeam.recycler.TextHintRecyclerItem;
-import ru.ytkab0bp.slicebeam.slic3r.GLModel;
-import ru.ytkab0bp.slicebeam.slic3r.GLShaderProgram;
-import ru.ytkab0bp.slicebeam.slic3r.GLShadersManager;
+import ru.ytkab0bp.slicebeam.slic3r.Native;
 import ru.ytkab0bp.slicebeam.slic3r.Slic3rConfigWrapper;
 import ru.ytkab0bp.slicebeam.slic3r.Slic3rUtils;
 import ru.ytkab0bp.slicebeam.theme.BeamTheme;
@@ -125,6 +118,7 @@ public class SetupActivity extends AppCompatActivity {
     public final static String EXTRA_ADD_PRINTER = "add_printer";
 
     private final static String TAG = "SetupActivity";
+    private final static int REQUEST_CODE_IMPORT_SETUP_PROFILE = 1001;
 
     private static final String ORCA_ASSET_DIR = "orca_profiles";
 
@@ -136,10 +130,7 @@ public class SetupActivity extends AppCompatActivity {
     private ViewPager2 pager;
     private SimpleRecyclerAdapter adapter;
     private TextView title;
-
-    private GLSurfaceView backgroundView;
-    private GLModel backgroundModel;
-    private GLShadersManager shadersManager;
+    private ImageView startupBackground;
 
     private int titleY;
     private float backgroundProgress;
@@ -151,6 +142,7 @@ public class SetupActivity extends AppCompatActivity {
 
     private List<ProfilesRepo> repos = new ArrayList<>();
     private ProfilesItem profilesItem;
+    private FilamentsItem filamentsItem;
     private CloudProfileItem cloudItem;
     private boolean limitProfileFragmentCount = true;
     private boolean isLoading;
@@ -164,6 +156,7 @@ public class SetupActivity extends AppCompatActivity {
     private boolean addPrinter;
 
     private List<ConfigObject> enabledPrinters = new ArrayList<>();
+    private List<ConfigObject> enabledFilaments = new ArrayList<>();
 
     {
         client.setUserAgent(String.format(Locale.ROOT, "SliceBeam/%s-%d", BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE));
@@ -242,6 +235,11 @@ public class SetupActivity extends AppCompatActivity {
                 }
                 if (profilesItem != null && profilesItem.recyclerView != null) {
                     profilesItem.recyclerView.setOverlayAlpha(1f - boostyProgress);
+                }
+
+                if (position == PROFILES_INDEX + 1 && filamentsItem != null) {
+                    // Printer selection may have changed since this page was last built.
+                    filamentsItem.refreshIfNeeded();
                 }
 
                 if (position == PROFILES_INDEX) {
@@ -361,7 +359,7 @@ public class SetupActivity extends AppCompatActivity {
                 }
 
                 invalidateTitleY();
-                backgroundView.requestRender();
+                updateStartupBackgroundVisibility();
             }
         });
         pager.setAdapter(adapter);
@@ -378,73 +376,18 @@ public class SetupActivity extends AppCompatActivity {
         };
         fl.setClipChildren(false);
         fl.setClipToPadding(false);
-        backgroundView = new GLSurfaceView(this) {
-            @Override
-            public void surfaceDestroyed(SurfaceHolder holder) {
-                super.surfaceDestroyed(holder);
-                backgroundModel.release();
-                backgroundModel = null;
-                shadersManager.clearShaders();
-                shadersManager = null;
-            }
-        };
-        backgroundView.setEGLContextClientVersion(3);
-        backgroundView.setRenderer(new GLSurfaceView.Renderer() {
-            @Override
-            public void onSurfaceCreated(GL10 gl, EGLConfig config) {}
-
-            @Override
-            public void onSurfaceChanged(GL10 gl, int width, int height) {
-                glViewport(0, 0, width, height);
-                if (backgroundModel == null) {
-                    backgroundModel = new GLModel();
-                    backgroundModel.initBackgroundTriangles();
-                    shadersManager = new GLShadersManager();
-                }
-            }
-
-            private float time;
-            private long lastUpdate;
-            @Override
-            public void onDrawFrame(GL10 gl) {
-                long dt = Math.min(System.currentTimeMillis() - lastUpdate, 16);
-                lastUpdate = System.currentTimeMillis();
-                time += dt / 1000f;
-
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                glClearColor(0, 0, 0, 0);
-
-                if (backgroundModel != null) {
-                    glDisable(GL_DEPTH_TEST);
-                    GLShaderProgram shader = shadersManager.get(GLShadersManager.SHADER_BEAM_INTRO);
-                    shader.startUsing();
-                    int topColor = ThemesRepo.getColor(android.R.attr.colorAccent);
-                    int bottomColor = ThemesRepo.getColor(android.R.attr.windowBackground);
-                    if (boostyProgress != 0f) {
-                        topColor = ColorUtils.blendARGB(bottomColor, ThemesRepo.getColor(R.attr.boostyColorTop), boostyProgress);
-                        bottomColor = ColorUtils.blendARGB(bottomColor, ThemesRepo.getColor(R.attr.boostyColorBottom), boostyProgress);
-                    }
-                    if (cloudProfile) {
-                        bottomColor = ColorUtils.blendARGB(bottomColor, topColor, 0.5f);
-                    }
-
-                    shader.setUniformColor("top_color", topColor);
-                    shader.setUniformColor("bottom_color", bottomColor);
-                    shader.setUniform("progress", backgroundProgress - (cloudProfile ? 1.4f : 0) - (boostyProgress != 0 ? 1.2f : 0));
-                    shader.setUniform("time", time);
-                    backgroundModel.render();
-                    shader.stopUsing();
-                    glEnable(GL_DEPTH_TEST);
-                }
-            }
-        });
-        backgroundView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
-        fl.addView(backgroundView);
+        fl.setBackgroundColor(Color.rgb(68, 63, 69));
+        startupBackground = new ImageView(this);
+        startupBackground.setImageResource(R.drawable.startup_background);
+        startupBackground.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        startupBackground.setAdjustViewBounds(false);
+        fl.addView(startupBackground, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        updateStartupBackgroundVisibility();
 
         title = new TextView(this);
         title.setGravity(Gravity.CENTER);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setText(cloudProfile ? R.string.SettingsCloudManageTitle : R.string.AppName);
+        title.setText(cloudProfile ? getString(R.string.SettingsCloudManageTitle) : "");
         title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 32);
         title.setTextColor(ThemesRepo.getColor(R.attr.textColorOnAccent));
         title.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL));
@@ -470,6 +413,338 @@ public class SetupActivity extends AppCompatActivity {
         orcaRepo.localAssets = true;
         orcaRepo.checked = true;
         repos.add(orcaRepo);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_CODE_IMPORT_SETUP_PROFILE && resultCode == Activity.RESULT_OK && data != null) {
+            loadProfileFromPicker(data.getData());
+        }
+    }
+
+    private void openProfilePicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+                "application/octet-stream",
+                "text/plain",
+                "application/x-zip-compressed",
+                "application/zip"
+        });
+        try {
+            startActivityForResult(intent, REQUEST_CODE_IMPORT_SETUP_PROFILE);
+        } catch (Exception e) {
+            new BeamAlertDialogBuilder(this)
+                    .setTitle(R.string.MenuFileImportProfilesFailed)
+                    .setMessage(e.toString())
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+        }
+    }
+
+    private void loadProfileFromPicker(Uri uri) {
+        if (uri == null) return;
+        String fileName = IOUtils.getDisplayName(uri);
+        if (fileName == null) {
+            new BeamAlertDialogBuilder(this)
+                    .setTitle(R.string.MenuFileImportProfilesFailed)
+                    .setMessage(R.string.MenuFileOpenFileFailedNullName)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+            return;
+        }
+
+        String lowerName = fileName.toLowerCase(Locale.ROOT);
+        Toast.makeText(this, "Loading profile…", Toast.LENGTH_SHORT).show();
+        if (isOrcaBundleFile(lowerName)) {
+            loadOrcaProfileBundle(uri);
+            return;
+        }
+        if (!lowerName.endsWith(".ini")) {
+            new BeamAlertDialogBuilder(this)
+                    .setTitle(R.string.MenuFileImportProfilesFailed)
+                    .setMessage("Choose an Orca .orca_printer/.orca_filament profile or an exported .ini profile.")
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+            return;
+        }
+
+        IOUtils.IO_POOL.submit(() -> {
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) {
+                    throw new FileNotFoundException(String.valueOf(uri));
+                }
+                saveImportedProfile(new Slic3rConfigWrapper(in));
+            } catch (Exception e) {
+                showProfileImportError(e);
+            }
+        });
+    }
+
+    private boolean isOrcaBundleFile(String fileName) {
+        return fileName.endsWith(".orca_printer") || fileName.endsWith(".orca_filament") || fileName.endsWith(".orca_process") || fileName.endsWith(".zip");
+    }
+
+    private void loadOrcaProfileBundle(Uri uri) {
+        IOUtils.IO_POOL.submit(() -> {
+            File copiedArchive = null;
+            File extractDir = new File(SliceBeam.getModelCacheDir(), "setup_orca_conv_" + UUID.randomUUID());
+            try {
+                copiedArchive = File.createTempFile("setup_orca_conv_", ".zip", SliceBeam.getModelCacheDir());
+                try (InputStream in = getContentResolver().openInputStream(uri);
+                     FileOutputStream fos = new FileOutputStream(copiedArchive)) {
+                    if (in == null) {
+                        throw new FileNotFoundException(String.valueOf(uri));
+                    }
+                    byte[] buffer = new byte[10240];
+                    int c;
+                    while ((c = in.read(buffer)) != -1) {
+                        fos.write(buffer, 0, c);
+                    }
+                }
+
+                if (!extractDir.mkdirs() && !extractDir.isDirectory()) {
+                    throw new IOException("Failed to create temporary extraction directory");
+                }
+
+                String manifest = Native.orca_bundle_read(copiedArchive.getAbsolutePath(), extractDir.getAbsolutePath());
+                if (manifest == null) {
+                    throw new IOException("Failed to read Orca profile bundle");
+                }
+
+                JSONObject root = new JSONObject(manifest);
+                JSONObject bundle = new JSONObject(root.getString("bundle_structure_json"));
+                if (!bundle.optString("bundle_type", "").endsWith("config bundle")) {
+                    throw new IOException(getString(R.string.OrcaConversionNotAConfigBundle));
+                }
+
+                saveImportedProfile(convertOrcaBundleToConfig(root));
+            } catch (Exception e) {
+                showProfileImportError(e);
+            } finally {
+                if (copiedArchive != null) {
+                    //noinspection ResultOfMethodCallIgnored
+                    copiedArchive.delete();
+                }
+                deleteRecursively(extractDir);
+            }
+        });
+    }
+
+    private Slic3rConfigWrapper convertOrcaBundleToConfig(JSONObject root) throws Exception {
+        JSONObject bundle = new JSONObject(root.getString("bundle_structure_json"));
+
+        HashMap<String, String> files = new HashMap<>();
+        JSONArray fileArray = root.getJSONArray("files");
+        for (int i = 0; i < fileArray.length(); i++) {
+            JSONObject file = fileArray.getJSONObject(i);
+            files.put(file.getString("path"), file.getString("content"));
+        }
+
+        Slic3rConfigWrapper w = new Slic3rConfigWrapper();
+        if (bundle.has("process_config")) {
+            JSONArray arr = bundle.getJSONArray("process_config");
+            List<String> names = new ArrayList<>();
+            List<String> stripped = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                String name = arr.getString(i);
+                names.add(name);
+                stripped.add(stripOrcaProfileName(name));
+            }
+            addInstalledProfileTitles(stripped, SliceBeam.CONFIG != null ? SliceBeam.CONFIG.printConfigs : null);
+            for (String name : names) {
+                String content = files.get(name);
+                if (content == null) throw new FileNotFoundException(name);
+                w.printConfigs.add(IOUtils.configJsonToIni(new JSONObject(content), "process", Slic3rConfigWrapper.PRINT_CONFIG_KEYS, stripped));
+            }
+            resolveBundleInherits(w.printConfigs, w::findPrint, SliceBeam.CONFIG != null ? name -> SliceBeam.CONFIG.findPrint(name) : null);
+        }
+        if (bundle.has("filament_config")) {
+            JSONArray arr = bundle.getJSONArray("filament_config");
+            List<String> names = new ArrayList<>();
+            List<String> stripped = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                String name = arr.getString(i);
+                names.add(name);
+                stripped.add(stripOrcaProfileName(name));
+            }
+            addInstalledProfileTitles(stripped, SliceBeam.CONFIG != null ? SliceBeam.CONFIG.filamentConfigs : null);
+            for (String name : names) {
+                String content = files.get(name);
+                if (content == null) throw new FileNotFoundException(name);
+                w.filamentConfigs.add(IOUtils.configJsonToIni(new JSONObject(content), "filament", Slic3rConfigWrapper.FILAMENT_CONFIG_KEYS, stripped));
+            }
+            resolveBundleInherits(w.filamentConfigs, w::findFilament, SliceBeam.CONFIG != null ? name -> SliceBeam.CONFIG.findFilament(name) : null);
+        }
+        if (bundle.has("printer_config")) {
+            JSONArray arr = bundle.getJSONArray("printer_config");
+            List<String> names = new ArrayList<>();
+            List<String> stripped = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                String name = arr.getString(i);
+                names.add(name);
+                stripped.add(stripOrcaProfileName(name));
+            }
+            addInstalledProfileTitles(stripped, SliceBeam.CONFIG != null ? SliceBeam.CONFIG.printerConfigs : null);
+            for (String name : names) {
+                String content = files.get(name);
+                if (content == null) throw new FileNotFoundException(name);
+                w.printerConfigs.add(IOUtils.configJsonToIni(new JSONObject(content), "machine", Slic3rConfigWrapper.PRINTER_CONFIG_KEYS, stripped));
+            }
+            resolveBundleInherits(w.printerConfigs, w::findPrinter, SliceBeam.CONFIG != null ? name -> SliceBeam.CONFIG.findPrinter(name) : null);
+        }
+        return w;
+    }
+
+    private String stripOrcaProfileName(String path) {
+        int slash = path.indexOf('/');
+        int start = slash >= 0 ? slash + 1 : 0;
+        int end = path.lastIndexOf('.');
+        if (end <= start) end = path.length();
+        return path.substring(start, end);
+    }
+
+    private void addInstalledProfileTitles(List<String> names, List<ConfigObject> installed) {
+        if (installed == null) return;
+        for (ConfigObject obj : installed) {
+            if (obj != null && obj.getTitle() != null && !names.contains(obj.getTitle())) {
+                names.add(obj.getTitle());
+            }
+        }
+    }
+
+    private interface BundleProfileFinder {
+        ConfigObject find(String name);
+    }
+
+    private void resolveBundleInherits(List<ConfigObject> configs, BundleProfileFinder bundleFinder, BundleProfileFinder fallbackFinder) throws IOUtils.MissingProfileException {
+        for (ConfigObject obj : configs) {
+            String inherit = obj.get("inherits");
+            while (inherit != null) {
+                ConfigObject base = bundleFinder.find(inherit);
+                if (base == null && fallbackFinder != null) {
+                    base = fallbackFinder.find(inherit);
+                }
+                if (base == null) {
+                    obj.values.remove("inherits");
+                    break;
+                }
+                obj.values.remove("inherits");
+                HashMap<String, String> newMap = new HashMap<>();
+                newMap.putAll(base.values);
+                newMap.putAll(obj.values);
+                obj.values = newMap;
+                inherit = obj.values.get("inherits");
+            }
+        }
+    }
+
+    private void saveImportedProfile(Slic3rConfigWrapper imported) throws Exception {
+        if (imported.printConfigs.isEmpty() && imported.filamentConfigs.isEmpty() && imported.printerConfigs.isEmpty()) {
+            ViewUtils.postOnMainThread(() -> new BeamAlertDialogBuilder(this)
+                    .setTitle(R.string.MenuFileImportProfilesFailed)
+                    .setMessage(R.string.MenuFileImportProfilesFailedEmpty)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show());
+            return;
+        }
+
+        ensureImportedDefaults(imported);
+        if (SliceBeam.CONFIG == null) {
+            SliceBeam.getCurrentConfigFile().delete();
+            SliceBeam.CONFIG = imported;
+            try (FileOutputStream fos = new FileOutputStream(SliceBeam.getConfigFile())) {
+                fos.write(imported.serialize().getBytes(StandardCharsets.UTF_8));
+            }
+        } else {
+            mergeImportedProfiles(imported);
+            SliceBeam.getCurrentConfigFile().delete();
+            SliceBeam.saveConfig();
+        }
+
+        SliceBeam.clearLiveDiffs();
+        ViewUtils.postOnMainThread(() -> {
+            Toast.makeText(this, "Profile loaded.", Toast.LENGTH_SHORT).show();
+            startActivity(new Intent(SetupActivity.this, MainActivity.class));
+            finish();
+        });
+    }
+
+    private void showProfileImportError(Exception e) {
+        Log.e(TAG, "Failed to import setup profile", e);
+        ViewUtils.postOnMainThread(() -> new BeamAlertDialogBuilder(this)
+                .setTitle(R.string.MenuFileImportProfilesFailed)
+                .setMessage(e.toString())
+                .setPositiveButton(android.R.string.ok, null)
+                .show());
+    }
+
+    private void deleteRecursively(File file) {
+        if (file == null || !file.exists()) return;
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursively(child);
+            }
+        }
+        //noinspection ResultOfMethodCallIgnored
+        file.delete();
+    }
+
+    private void ensureImportedDefaults(Slic3rConfigWrapper cfg) {
+        if (cfg.presets == null) {
+            cfg.presets = new ConfigObject();
+        }
+        if (cfg.presets.get("printer") == null && !cfg.printerConfigs.isEmpty()) {
+            cfg.presets.put("printer", cfg.printerConfigs.get(0).getTitle());
+        }
+        if (cfg.presets.get("print") == null && !cfg.printConfigs.isEmpty()) {
+            cfg.presets.put("print", cfg.printConfigs.get(0).getTitle());
+        }
+        if (cfg.presets.get("filament") == null && !cfg.filamentConfigs.isEmpty()) {
+            String pick = cfg.filamentConfigs.get(0).getTitle();
+            for (ConfigObject fil : cfg.filamentConfigs) {
+                String t = fil.getTitle();
+                if (t != null && t.contains("PLA")) {
+                    pick = t;
+                    break;
+                }
+            }
+            cfg.presets.put("filament", pick);
+        }
+    }
+
+    private void mergeImportedProfiles(Slic3rConfigWrapper imported) {
+        Slic3rConfigWrapper existing = SliceBeam.CONFIG;
+        for (ConfigObject p : imported.printerConfigs) {
+            if (existing.findPrinter(p.getTitle()) == null) existing.printerConfigs.add(p);
+        }
+        for (ConfigObject f : imported.filamentConfigs) {
+            if (existing.findFilament(f.getTitle()) == null) existing.filamentConfigs.add(f);
+        }
+        for (ConfigObject pr : imported.printConfigs) {
+            boolean dup = false;
+            for (ConfigObject ex : existing.printConfigs) {
+                if (ex.getTitle().equals(pr.getTitle())
+                        && java.util.Objects.equals(ex.get("compatible_printers"), pr.get("compatible_printers"))) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (!dup) existing.printConfigs.add(pr);
+        }
+
+        if (existing.presets == null) {
+            existing.presets = new ConfigObject();
+        }
+        String printer = imported.presets != null ? imported.presets.get("printer") : null;
+        String print = imported.presets != null ? imported.presets.get("print") : null;
+        String filament = imported.presets != null ? imported.presets.get("filament") : null;
+        if (printer != null && existing.findPrinter(printer) != null) existing.presets.put("printer", printer);
+        if (print != null && existing.findPrint(print) != null) existing.presets.put("print", print);
+        if (filament != null && existing.findFilament(filament) != null) existing.presets.put("filament", filament);
     }
 
     private void loadLocalProfiles(ProfilesRepo repo, AtomicInteger loadedCount, AtomicInteger totalNeeded, Runnable onLoadedAll) {
@@ -520,6 +795,15 @@ public class SetupActivity extends AppCompatActivity {
         int color = ColorUtils.blendARGB(ThemesRepo.getColor(R.attr.textColorOnAccent), ThemesRepo.getColor(android.R.attr.colorAccent), cloudProfile ? 0f : backgroundProgress - boostyProgress);
         title.setTextColor(color);
         title.setTranslationY(ViewUtils.lerp(titleY, (ViewUtils.dp(52) - title.getHeight() * title.getScaleY()) / 2f, backgroundProgress));
+    }
+
+    private void updateStartupBackgroundVisibility() {
+        if (startupBackground == null) return;
+        float alpha = 1f - backgroundProgress;
+        if (boostyOnly || cloudProfile) alpha = 0f;
+        alpha = Math.max(0f, Math.min(1f, alpha));
+        startupBackground.setAlpha(alpha);
+        startupBackground.setVisibility(alpha <= 0.01f ? View.INVISIBLE : View.VISIBLE);
     }
 
     @Override
@@ -578,7 +862,8 @@ public class SetupActivity extends AppCompatActivity {
             List<SimpleRecyclerItem> items = new ArrayList<>(Arrays.asList(
                     new IntroItem(),
                     new PresetChoiceItem(),
-                    profilesItem = new ProfilesItem()));
+                    profilesItem = new ProfilesItem(),
+                    filamentsItem = new FilamentsItem()));
 
             if (BeamServerData.isBoostyAvailable()) {
                 BOOSTY_INDEX = items.size();
@@ -601,18 +886,6 @@ public class SetupActivity extends AppCompatActivity {
         } else {
             super.onBackPressed();
         }
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        backgroundView.onPause();
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        backgroundView.onResume();
     }
 
     private void scrollToNext() {
@@ -1045,15 +1318,16 @@ public class SetupActivity extends AppCompatActivity {
     private final class PresetChoiceItem extends SimpleRecyclerItem<View> {
         private TextView buttonView;
         private LinearLayout builtInButton;
-        private LinearLayout customButton;
+        private LinearLayout loadProfileButton;
         private BeamSwitch builtInSwitch;
-        private BeamSwitch customSwitch;
+        private TextView browseText;
 
         @Override
         public View onCreateView(Context ctx) {
             LinearLayout ll = new LinearLayout(ctx);
             ll.setOrientation(LinearLayout.VERTICAL);
-            ll.setGravity(Gravity.BOTTOM);
+            ll.setGravity(Gravity.TOP);
+            ll.setPadding(0, ViewUtils.dp(42), 0, 0);
 
             TextView hint = new TextView(ctx);
             hint.setText("Select preset source:");
@@ -1086,29 +1360,45 @@ public class SetupActivity extends AppCompatActivity {
                 bottomMargin = ViewUtils.dp(12);
             }});
 
-            customButton = new LinearLayout(ctx);
-            customButton.setOrientation(LinearLayout.HORIZONTAL);
-            customButton.setGravity(Gravity.CENTER_VERTICAL);
-            customButton.setPadding(ViewUtils.dp(16), ViewUtils.dp(16), ViewUtils.dp(16), ViewUtils.dp(16));
+            loadProfileButton = new LinearLayout(ctx);
+            loadProfileButton.setOrientation(LinearLayout.HORIZONTAL);
+            loadProfileButton.setGravity(Gravity.CENTER_VERTICAL);
+            loadProfileButton.setPadding(ViewUtils.dp(16), ViewUtils.dp(16), ViewUtils.dp(16), ViewUtils.dp(16));
 
-            TextView customText = new TextView(ctx);
-            customText.setText("Custom Presets");
-            customText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
-            customText.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
-            customText.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
-            customButton.addView(customText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            LinearLayout loadTextColumn = new LinearLayout(ctx);
+            loadTextColumn.setOrientation(LinearLayout.VERTICAL);
+            TextView loadTitle = new TextView(ctx);
+            loadTitle.setText("Load Profile");
+            loadTitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            loadTitle.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+            loadTitle.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            loadTextColumn.addView(loadTitle, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            TextView loadSubtitle = new TextView(ctx);
+            loadSubtitle.setText("Choose an .orca_printer profile file");
+            loadSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+            loadSubtitle.setTextColor(ThemesRepo.getColor(android.R.attr.textColorSecondary));
+            loadTextColumn.addView(loadSubtitle, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            loadProfileButton.addView(loadTextColumn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-            customSwitch = new BeamSwitch(ctx);
-            customSwitch.setClickable(false);
-            customButton.addView(customSwitch);
+            browseText = new TextView(ctx);
+            browseText.setText("Browse");
+            browseText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+            browseText.setGravity(Gravity.CENTER);
+            browseText.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            browseText.setTextColor(ThemesRepo.getColor(android.R.attr.colorAccent));
+            loadProfileButton.addView(browseText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+                leftMargin = ViewUtils.dp(12);
+            }});
 
-            ll.addView(customButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+            ll.addView(loadProfileButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
                 leftMargin = rightMargin = ViewUtils.dp(16);
                 bottomMargin = ViewUtils.dp(24);
             }});
 
-            builtInButton.setOnClickListener(v -> selectOption(false));
-            customButton.setOnClickListener(v -> selectOption(true));
+            builtInButton.setOnClickListener(v -> selectBuiltIn());
+            loadProfileButton.setOnClickListener(v -> openProfilePicker());
+
+            ll.addView(new View(ctx), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
             buttonView = new TextView(ctx);
             buttonView.setText(R.string.IntroNext);
@@ -1126,10 +1416,9 @@ public class SetupActivity extends AppCompatActivity {
             return ll;
         }
 
-        private void selectOption(boolean custom) {
-            profilesItem.useCustomProfile = custom;
-            builtInSwitch.setChecked(!custom);
-            customSwitch.setChecked(custom);
+        private void selectBuiltIn() {
+            profilesItem.useCustomProfile = false;
+            builtInSwitch.setChecked(true);
             if (profilesItem.adapter != null) {
                 profilesItem.adapter.setItems(profilesItem.getItems());
             }
@@ -1141,16 +1430,12 @@ public class SetupActivity extends AppCompatActivity {
             int controlHighlight = ThemesRepo.getColor(android.R.attr.colorControlHighlight);
             
             builtInButton.setBackground(ViewUtils.createRipple(controlHighlight, 16));
-            customButton.setBackground(ViewUtils.createRipple(controlHighlight, 16));
+            loadProfileButton.setBackground(ViewUtils.createRipple(controlHighlight, 16));
             
             buttonView.setBackground(ViewUtils.createRipple(controlHighlight, accent, 16));
-            
+            browseText.setTextColor(accent);
             builtInSwitch.onApplyTheme();
-            customSwitch.onApplyTheme();
-
-            boolean custom = profilesItem.useCustomProfile;
-            builtInSwitch.setChecked(!custom);
-            customSwitch.setChecked(custom);
+            builtInSwitch.setChecked(true);
         }
     }
 
@@ -1284,6 +1569,157 @@ public class SetupActivity extends AppCompatActivity {
                     })
                     .addEndListener((animation, canceled, value, velocity) -> progressBar.setVisibility(View.GONE))
                     .start();
+        }
+    }
+
+    private final class FilamentsItem extends SimpleRecyclerItem<View> {
+        private FadeRecyclerView recyclerView;
+        private final SimpleRecyclerAdapter adapter = new SimpleRecyclerAdapter();
+        private TextView buttonView;
+        private final List<ConfigObject> currentFilaments = new ArrayList<>();
+        private String builtFor;
+
+        @Override
+        public View onCreateView(Context ctx) {
+            FrameLayout fl = new FrameLayout(ctx);
+            recyclerView = new FadeRecyclerView(ctx);
+            recyclerView.setAdapter(adapter);
+            fl.addView(recyclerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+                topMargin = ViewUtils.dp(52);
+                bottomMargin = ViewUtils.dp(72);
+            }});
+
+            buttonView = new TextView(ctx);
+            buttonView.setText(R.string.IntroNext);
+            buttonView.setTextColor(ThemesRepo.getColor(R.attr.textColorOnAccent));
+            buttonView.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+            buttonView.setGravity(Gravity.CENTER);
+            buttonView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            buttonView.setOnClickListener(v -> scrollToNext());
+            fl.addView(buttonView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(52), Gravity.BOTTOM) {{
+                leftMargin = rightMargin = ViewUtils.dp(16);
+                bottomMargin = ViewUtils.dp(16);
+            }});
+
+            fl.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            return fl;
+        }
+
+        @Override
+        public void onBindView(View view) {
+            buttonView.setBackground(ViewUtils.createRipple(ThemesRepo.getColor(android.R.attr.colorControlHighlight), ThemesRepo.getColor(android.R.attr.colorAccent), 16));
+            refreshIfNeeded();
+        }
+
+        /** Rebuild the filament list when the printer selection changed since the last build. */
+        private void refreshIfNeeded() {
+            if (recyclerView == null) return;
+
+            StringBuilder kb = new StringBuilder(profilesItem != null && profilesItem.useCustomProfile ? "custom\n" : "preset\n");
+            for (ConfigObject p : enabledPrinters) kb.append(p.getTitle()).append('\n');
+            String key = kb.toString();
+            if (key.equals(builtFor) && adapter.getItemCount() > 0) return;
+            builtFor = key;
+
+            List<SimpleRecyclerItem> items = new ArrayList<>();
+            items.add(new BigHeaderItem(getString(R.string.IntroFilamentsHeader)));
+            currentFilaments.clear();
+
+            if (profilesItem == null || !profilesItem.useCustomProfile) {
+                List<Slic3rConfigWrapper> vendors = new ArrayList<>();
+                for (List<Slic3rConfigWrapper> w : profilesMap.values()) {
+                    vendors.addAll(w);
+                }
+                Collections.sort(vendors, (o1, o2) -> o1.vendor.values.get("name").compareToIgnoreCase(o2.vendor.values.get("name")));
+
+                for (Slic3rConfigWrapper w : vendors) {
+                    boolean hasEnabledPrinter = false;
+                    for (ConfigObject pm : w.printerModels) {
+                        if (enabledPrinters.contains(pm)) {
+                            hasEnabledPrinter = true;
+                            break;
+                        }
+                    }
+                    if (!hasEnabledPrinter) continue;
+
+                    List<SimpleRecyclerItem> rows = new ArrayList<>();
+                    for (ConfigObject fil : w.filamentConfigs) {
+                        String t = fil.getTitle();
+                        if (t == null || (t.startsWith("*") && t.endsWith("*"))) continue;
+                        rows.add(new ProfileItem(fil, TYPE_FILAMENT));
+                        currentFilaments.add(fil);
+                    }
+                    if (rows.isEmpty()) continue;
+                    items.add(new BigHeaderItem(w.vendor.values.get("name")));
+                    items.addAll(rows);
+                }
+            }
+
+            if (currentFilaments.isEmpty()) {
+                items.add(new BigHeaderItem(getString(R.string.IntroFilamentsNone)));
+            } else {
+                items.add(1, new SelectAllItem());
+            }
+
+            // Pre-check the default materials of the selected printer models.
+            enabledFilaments.clear();
+            for (ConfigObject printerModel : enabledPrinters) {
+                String dm = printerModel.get("default_materials");
+                if (TextUtils.isEmpty(dm)) continue;
+                for (String mat : dm.split(";")) {
+                    String matTitle = mat.trim();
+                    for (ConfigObject fil : currentFilaments) {
+                        if (matTitle.equals(fil.getTitle()) && !enabledFilaments.contains(fil)) {
+                            enabledFilaments.add(fil);
+                        }
+                    }
+                }
+            }
+
+            adapter.setItems(items);
+        }
+
+        private final class SelectAllItem extends SimpleRecyclerItem<LinearLayout> {
+            @SuppressLint("NotifyDataSetChanged")
+            @Override
+            public LinearLayout onCreateView(Context ctx) {
+                LinearLayout ll = new LinearLayout(ctx);
+                ll.setOrientation(LinearLayout.HORIZONTAL);
+
+                TextView selectAll = makeTextButton(ctx, R.string.IntroFilamentsSelectAll, v -> {
+                    for (ConfigObject fil : currentFilaments) {
+                        if (!enabledFilaments.contains(fil)) enabledFilaments.add(fil);
+                    }
+                    adapter.notifyDataSetChanged();
+                });
+                TextView deselectAll = makeTextButton(ctx, R.string.IntroFilamentsDeselectAll, v -> {
+                    enabledFilaments.removeAll(currentFilaments);
+                    adapter.notifyDataSetChanged();
+                });
+                ll.addView(selectAll, new LinearLayout.LayoutParams(0, ViewUtils.dp(40), 1f));
+                ll.addView(deselectAll, new LinearLayout.LayoutParams(0, ViewUtils.dp(40), 1f) {{
+                    leftMargin = ViewUtils.dp(8);
+                }});
+
+                ll.setPadding(ViewUtils.dp(16), 0, ViewUtils.dp(16), ViewUtils.dp(8));
+                ll.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                return ll;
+            }
+
+            @Override
+            public void onBindView(LinearLayout view) {}
+
+            private TextView makeTextButton(Context ctx, int textRes, View.OnClickListener listener) {
+                TextView tv = new TextView(ctx);
+                tv.setText(textRes);
+                tv.setTextColor(ThemesRepo.getColor(android.R.attr.colorAccent));
+                tv.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+                tv.setGravity(Gravity.CENTER);
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+                tv.setBackground(ViewUtils.createRipple(ThemesRepo.getColor(android.R.attr.colorControlHighlight), ColorUtils.setAlphaComponent(ThemesRepo.getColor(android.R.attr.colorAccent), 0x18), 12));
+                tv.setOnClickListener(listener);
+                return tv;
+            }
         }
     }
 
@@ -1436,15 +1872,25 @@ public class SetupActivity extends AppCompatActivity {
                             }
                         }
 
-                        for (String mat : materials) {
-                            mat = mat.trim();
+                        // Filaments are normally chosen on the wizard's filament page; this
+                        // default_materials lookup only runs if that page was never built.
+                        if (enabledFilaments.isEmpty()) {
+                            for (String mat : materials) {
+                                mat = mat.trim();
 
-                            for (List<Slic3rConfigWrapper> wrappers : profilesMap.values()) {
-                                for (Slic3rConfigWrapper w : wrappers) {
-                                    ConfigObject obj = w.findFilament(mat);
-                                    if (obj != null) cfg.filamentConfigs.add(obj);
+                                for (List<Slic3rConfigWrapper> wrappers : profilesMap.values()) {
+                                    for (Slic3rConfigWrapper w : wrappers) {
+                                        ConfigObject obj = w.findFilament(mat);
+                                        if (obj != null) cfg.filamentConfigs.add(obj);
+                                    }
                                 }
                             }
+                        }
+                    }
+
+                    for (ConfigObject fil : enabledFilaments) {
+                        if (cfg.findFilament(fil.getTitle()) == null) {
+                            cfg.filamentConfigs.add(fil);
                         }
                     }
                     cfg.presets = new ConfigObject();
@@ -1728,8 +2174,8 @@ public class SetupActivity extends AppCompatActivity {
                 onApplyTheme();
             }
 
-            private List<ConfigObject> getList() {
-                return enabledPrinters;
+            private List<ConfigObject> getList(ProfileItem item) {
+                return item.type == TYPE_FILAMENT ? enabledFilaments : enabledPrinters;
             }
 
             public void bind(ProfileItem item) {
@@ -1737,7 +2183,7 @@ public class SetupActivity extends AppCompatActivity {
                 if (item.object == null || item.object.thumbnailUrl == null) {
                     params.width = params.height = ViewUtils.dp(36);
                     icon.setColorFilter(ThemesRepo.getColor(android.R.attr.colorAccent));
-                    switch (type) {
+                    switch (item.type) {
                         case TYPE_PRINTER:
                             icon.setImageResource(R.drawable.printer_outline_28);
                             break;
@@ -1770,18 +2216,18 @@ public class SetupActivity extends AppCompatActivity {
                 }
 
                 title.setText(item.object.get("name") != null ? item.object.get("name") : item.object.getTitle());
-                boolean checked = getList().contains(item.object);
+                boolean checked = getList(item).contains(item.object);
 
                 mSwitch.setChecked(checked);
                 setOnClickListener(v -> {
-                    boolean _checked = getList().contains(item.object);
+                    boolean _checked = getList(item).contains(item.object);
                     _checked = !_checked;
                     mSwitch.setChecked(_checked);
 
                     if (_checked) {
-                        getList().add(item.object);
+                        getList(item).add(item.object);
                     } else {
-                        getList().remove(item.object);
+                        getList(item).remove(item.object);
                     }
                 });
                 onApplyTheme();

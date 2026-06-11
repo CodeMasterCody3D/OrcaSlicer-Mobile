@@ -58,7 +58,13 @@ public class Slic3rConfigWrapper {
             "mmu_segmented_region_interlocking_depth", "wipe_tower_extruder", "wipe_tower_no_sparse_layers", "wipe_tower_extra_flow", "wipe_tower_extra_spacing", "compatible_printers", "compatible_printers_condition", "inherits",
             "perimeter_generator", "wall_transition_length", "wall_transition_filter_deviation", "wall_transition_angle",
             "wall_distribution_count", "min_feature_size", "min_bead_width",
-            "top_one_perimeter_type", "only_one_perimeter_first_layer"
+            "top_one_perimeter_type", "only_one_perimeter_first_layer",
+            "only_one_wall_top",
+            // OrcaSlicer-native process keys with no legacy equivalent
+            "initial_layer_infill_speed", "elefant_foot_compensation_layers", "enable_arc_fitting",
+            "wall_direction", "slowdown_for_curled_perimeters", "xy_hole_compensation",
+            "default_jerk", "outer_wall_jerk", "inner_wall_jerk", "infill_jerk",
+            "top_surface_jerk", "initial_layer_jerk", "travel_jerk"
     );
     public final static List<String> FILAMENT_CONFIG_KEYS = Arrays.asList(
             "filament_colour", "filament_diameter", "filament_type", "filament_soluble", "filament_notes", "filament_max_volumetric_speed", "filament_infill_max_speed", "filament_infill_max_crossing_speed",
@@ -77,7 +83,12 @@ public class Slic3rConfigWrapper {
             // Profile compatibility
             "filament_vendor", "compatible_prints", "compatible_prints_condition", "compatible_printers", "compatible_printers_condition", "inherits",
             // Shrinkage compensation
-            "filament_shrinkage_compensation_xy", "filament_shrinkage_compensation_z"
+            "filament_shrinkage_compensation_xy", "filament_shrinkage_compensation_z",
+            // Per-plate bed temperatures (the hot-plate pair imports via legacy bed_temperature keys)
+            "cool_plate_temp", "cool_plate_temp_initial_layer", "eng_plate_temp", "eng_plate_temp_initial_layer",
+            "textured_plate_temp", "textured_plate_temp_initial_layer", "textured_cool_plate_temp", "textured_cool_plate_temp_initial_layer",
+            "supertack_plate_temp", "supertack_plate_temp_initial_layer",
+            "additional_cooling_fan_speed", "overhang_fan_threshold"
     );
     public final static List<String> PRINTER_CONFIG_KEYS = Arrays.asList(
             "printer_technology", "autoemit_temperature_commands",
@@ -103,7 +114,8 @@ public class Slic3rConfigWrapper {
             "retract_length", "retract_lift", "retract_lift_above", "retract_lift_below", "retract_lift_enforce",
             "z_hop_types", "travel_slope", "retract_speed", "deretract_speed", "retract_before_travel",
             "retract_layer_change", "wipe", "wipe_distance", "retract_before_wipe", "retract_restart_extra",
-            "retract_length_toolchange", "retract_restart_extra_toolchange", "default_filament_profile"
+            "retract_length_toolchange", "retract_restart_extra_toolchange", "default_filament_profile",
+            "enable_filament_ramming", "curr_bed_type"
     );
     public final static List<String> PHYSICAL_PRINTER_CONFIG_KEYS = Arrays.asList(
             "preset_name", // temporary option to compatibility with older Slicer
@@ -310,12 +322,6 @@ public class Slic3rConfigWrapper {
 
                 if (key.equals("arc_fitting")) {
                     continue;
-                }
-                if (value.equals("crosshatch")) {
-                    value = "grid";
-                }
-                if (key.equals("ironing_type") && value.equals("no ironing")) {
-                    value = "top";
                 }
                 if (key.equals("thumbnails")) {
                     value = value.replaceAll(", \\d+x\\d+/COLPIC", "");

@@ -81,9 +81,6 @@ public class IOUtils {
             // Cases ConfigObject.KEY_MIGRATION can't express:
             // Orca's bundled JSONs use the plural form; the engine key (and the whitelist entry) is singular.
             case "chamber_temperatures": return "chamber_temperature";
-            // first_layer_speed_over_raft has no Orca equivalent, so KEY_MIGRATION has no entry for it;
-            // keep the historical alias so the value is at least preserved in the profile.
-            case "initial_layer_infill_speed": return "first_layer_speed_over_raft";
         }
         // KEY_MIGRATION (legacy <-> Orca engine names) is the single source of truth for renames;
         // a key the whitelist knows under its legacy name is resolved here, all others pass through.
@@ -103,10 +100,7 @@ public class IOUtils {
 
             for (Map.Entry<String, String> en : o.values.entrySet()) {
                 if (supportedKeys.contains(en.getKey())) {
-                    if (en.getKey().equals("ironing_type") && en.getValue().equals("no ironing")) {
-                        cfg.values.put("ironing", "0");
-                        cfg.values.put("ironing_type", "top");
-                    } else if (!en.getKey().equals("thumbnails")) {
+                    if (!en.getKey().equals("thumbnails")) {
                         cfg.values.put(en.getKey(), en.getValue());
                     }
                 }
@@ -127,6 +121,13 @@ public class IOUtils {
 
     public static ConfigObject configJsonToIni(JSONObject obj, String type, List<String> supportedKeys, List<String> inBundle) throws JSONException, IOException, MissingProfileException {
         ConfigObject cfg = new ConfigObject();
+        // profileListType drives isSelected(); without it every imported profile defaults to
+        // PROFILE_LIST_PRINT and the printer/filament selectors never show a selection.
+        switch (type) {
+            case "process":  cfg.profileListType = ConfigObject.PROFILE_LIST_PRINT;    break;
+            case "filament": cfg.profileListType = ConfigObject.PROFILE_LIST_FILAMENT; break;
+            case "machine":  cfg.profileListType = ConfigObject.PROFILE_LIST_PRINTER;  break;
+        }
         if (!TextUtils.isEmpty(obj.optString("inherits", null))) {
             String inherit = obj.getString("inherits");
 
@@ -172,10 +173,6 @@ public class IOUtils {
                         }
 
                         if (supportedKeys.contains(key)) {
-                            if (key.equals("ironing_type") && en.getValue().equals("no ironing")) {
-                                cfg.values.put("ironing", "0");
-                                cfg.values.put("ironing_type", "top");
-                            }
                             if (key.equals("start_filament_gcode") || key.equals("end_filament_gcode") ||
                                 key.equals("start_gcode") || key.equals("end_gcode")) {
 

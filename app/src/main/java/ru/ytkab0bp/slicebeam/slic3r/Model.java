@@ -119,6 +119,22 @@ public class Model {
         return Native.model_cut(pointer, objectIndex, zHeight, rotX, rotY, keepUpper, keepLower);
     }
 
+    public void addConnector(int objectIndex, Vec3d position, float radius, float height, int type, double rotX, double rotY) {
+        Native.model_add_connector_on_plane(pointer, objectIndex, position.x, position.y, position.z, radius, height, type, rotX, rotY);
+    }
+
+    public void addConnector(int objectIndex, Vec3d position, float radius, float height, int type) {
+        Native.model_add_connector(pointer, objectIndex, position.x, position.y, position.z, radius, height, type);
+    }
+
+    public void removeConnector(int objectIndex, int connectorIndex) {
+        Native.model_remove_connector(pointer, objectIndex, connectorIndex);
+    }
+
+    public void clearConnectors(int objectIndex) {
+        Native.model_clear_connectors(pointer, objectIndex);
+    }
+
     public void getTranslation(int i, Vec3d vec) {
         double[] tr = Native.model_get_translation(pointer, i);
         vec.set(tr[0], tr[1], tr[2]);

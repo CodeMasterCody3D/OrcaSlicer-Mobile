@@ -205,6 +205,10 @@ public class Native {
     static native void model_flatten_rotate(long ptr, int i, long surfacePtr);
     static native long[] model_create_flatten_planes(long ptr, int i);
     static native boolean model_cut(long ptr, int i, double zHeight, double rotX, double rotY, boolean keepUpper, boolean keepLower);
+    static native void model_add_connector(long ptr, int objIdx, double x, double y, double z, float radius, float height, int type);
+    static native void model_add_connector_on_plane(long ptr, int objIdx, double x, double y, double z, float radius, float height, int type, double rotX, double rotY);
+    static native void model_remove_connector(long ptr, int objIdx, int connIdx);
+    static native void model_clear_connectors(long ptr, int objIdx);
     static native void model_auto_orient(long ptr, int i);
     static native boolean model_is_big_object(long ptr, int i);
     static native int model_get_extruder(long ptr, int i);

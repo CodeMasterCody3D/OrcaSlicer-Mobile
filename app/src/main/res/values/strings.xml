@@ -126,6 +126,7 @@
     <string name="MenuTransformScaleMM">Input in mm</string>
     <string name="MenuTransformMirror">Mirror</string>
     <string name="MenuTransformCut">Cut (Half)</string>
+    <string name="MenuTransformPaint">Paint Mode</string>
     <string name="MenuTransformMirrorX">Mirror X</string>
     <string name="MenuTransformMirrorY">Mirror Y</string>
     <string name="MenuTransformMirrorZ">Mirror Z</string>
@@ -169,6 +170,10 @@
     <string name="IntroBoostyTitle">Is supported by these awesome people on Boosty:</string>
     <string name="IntroBoostySupport">Subscribe at Boosty</string>
     <string name="IntroNext">Next</string>
+    <string name="IntroFilamentsHeader">Filaments</string>
+    <string name="IntroFilamentsSelectAll">Select all</string>
+    <string name="IntroFilamentsDeselectAll">Deselect all</string>
+    <string name="IntroFilamentsNone">No bundled filaments for the selected printers — generic profiles will be used.</string>
     <string name="IntroConfigured">All seems to be configured.\nJust tap finish!</string>
     <string name="IntroFinish">Finish</string>
     <string name="IntroEarlyAccess">Early access</string>
