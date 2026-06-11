@@ -2,7 +2,7 @@
 
 A 3D printing slicer for Android, powered by the real **OrcaSlicer** engine.
 
-OrcaSlicer Mobile takes the excellent Android slicer shell from [Slice Beam](https://github.com/ytkab0bp/SliceBeam) and replaces its slicing core with a full port of [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer)'s `libslic3r` — so the G-code you slice on your phone comes from the same engine you use on the desktop.
+OrcaSlicer Mobile takes the excellent Android slicer shell from [Slice Beam](https://github.com/utkabobr/SliceBeam) and replaces its slicing core with a full port of [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer)'s `libslic3r` — so the G-code you slice on your phone comes from the same engine you use on the desktop.
 
 ## Features
 
@@ -39,7 +39,7 @@ Note: the Java package path remains `ru.ytkab0bp.slicebeam` for now because nati
 
 This project stands on the shoulders of:
 
-- [Slice Beam](https://github.com/ytkab0bp/SliceBeam) by ytkab0bp — the Android shell, JNI bridge, and OpenGL preview this project is built on
+- [Slice Beam](https://github.com/utkabobr/SliceBeam) by utkabobr — the Android shell, JNI bridge, and OpenGL preview this project is built on
 - [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) by SoftFever — the slicing engine
 - [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) / Slic3r and [Bambu Studio](https://github.com/bambulab/BambuStudio), which OrcaSlicer is built upon
 
