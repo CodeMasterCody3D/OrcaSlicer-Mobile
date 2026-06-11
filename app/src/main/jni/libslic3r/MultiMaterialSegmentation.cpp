@@ -1,4 +1,3 @@
-#include <android/log.h>
 #include "BoundingBox.hpp"
 #include "ClipperUtils.hpp"
 #include "EdgeGrid.hpp"
@@ -531,6 +530,13 @@ struct PaintedLineVisitor
 
     bool operator()(coord_t iy, coord_t ix)
     {
+        // SCALING_FACTOR is a runtime global in this engine (switched for large-format printers),
+        // so these thresholds must not be class-level statics: C++ leaves the cross-TU order of
+        // dynamic initialization unspecified, and on the Android (NDK clang) build append_threshold2
+        // ran before its dependencies and was initialized to sqr(0.), silently rejecting every
+        // painted line - paint on vertical surfaces never reached the slicer.
+        const double append_threshold      = 50. * SCALED_EPSILON;
+        const double append_threshold2     = Slic3r::sqr(append_threshold);
         // Called with a row and column of the grid cell, which is intersected by a line.
         auto         cell_data_range        = grid.cell_data_range(iy, ix);
         const Vec2d  v1                     = line_to_test.vector().cast<double>();
@@ -583,9 +589,7 @@ struct PaintedLineVisitor
     std::unordered_set<std::pair<size_t, size_t>, boost::hash<std::pair<size_t, size_t>>> painted_lines_set;
     int                                                                                   color             = -1;
 
-    static inline const double                                                            cos_threshold2    = Slic3r::sqr(cos(M_PI * 30. / 180.));
-    static inline const double                                                            append_threshold  = 50 * SCALED_EPSILON;
-    static inline const double                                                            append_threshold2 = Slic3r::sqr(append_threshold);
+    static constexpr double                                                               cos_threshold2    = 0.75; // == sqr(cos(M_PI * 30. / 180.))
 };
 
 BoundingBox get_extents(const std::vector<ColoredLines> &colored_polygons) {
