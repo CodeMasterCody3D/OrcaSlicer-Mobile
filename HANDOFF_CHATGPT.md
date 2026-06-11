@@ -57,11 +57,34 @@ Diagnosis (verified):
 11. **FIX APPLIED**: `IOUtils.configJsonToIni` now sets `cfg.profileListType` from the `type` param ("process"/"filament"/"machine"). Covers both SetupActivity and MainActivity import paths.
 12. `SetupActivity.ensureImportedDefaults`: default filament preset now prefers a title containing "PLA" instead of first-alphabetical (was picking ABS).
 
+### Round 4 — Orca Desktop 3MF project import (verified on device)
+13. `beam_native.cpp`: fixed 3MF geometry loading by passing `LoadStrategy::LoadModel` for `.3mf` files. The old JNI call used only `AddDefaultInstances`; `bbs_3mf.cpp` therefore set `m_load_model = false` and returned an empty model for Orca Desktop project 3MFs (including DRC-backed files like `3DBenchy.3mf`).
+14. `MainActivity.java`: 3MF import now treats `.3mf` as a project load path:
+   - Preserves project object layout (`preserveProjectLayout=true`) instead of auto-centering/autoorienting.
+   - Counts embedded plates from `Metadata/model_settings.config` / `Metadata/plate_*` assets and reports the count in the load snackbar when >1.
+   - Imports separate embedded profile files when present (`Metadata/process_settings_*`, `filament_settings_*`, `machine_settings_*`).
+   - **New fallback**: if Orca stores active profile data only in `Metadata/project_settings.config`, synthesize print/filament/printer `ConfigObject`s from that JSON, import them through the existing whitelist/key-migration path, and activate `print_settings_id`, first `filament_settings_id`, and `printer_settings_id` in `SliceBeam.CONFIG.presets`.
+15. `BedFragment.java`: `loadModel(File, boolean preserveProjectLayout, callback)` supports project-layout-preserving loads and reports added objects.
+16. `FileMenu.java` / `MainActivity.isSupportedModelFile`: file picker/open path allows the formats supported by this Android native `Model::read_from_file()` build: STL, OLTP, OBJ, SVG, DRC, AMF, 3MF, and G-code/BGCode. Desktop-only Apple ModelIO formats and STEP/STP are not supported by this Android `read_from_file()` path yet.
+17. Verification performed on adb device `R5CR60DKJGB`:
+   - Forced rebuild: `./gradlew :app:assembleDebug --rerun-tasks` → `BUILD SUCCESSFUL`, 78 tasks executed.
+   - Installed APK: `app/build/outputs/apk/debug/OrcaSlicerMobile_3b7af24f4a.apk` → `Performing Streamed Install` / `Success`.
+   - Pulled/opened test file: `test_3mf/3DBenchy.3mf` from device `/sdcard/3mf/3DBenchy.3mf`.
+   - Opened via adb VIEW intent from app-private `files/test/3DBenchy.3mf`.
+   - Screenshot `/tmp/orca3mf/benchy_project_relaunch.png` confirmed the teal 3DBenchy model rendered on the bed with no loading spinner/error.
+   - Logcat grep showed no `Failed to load model`, `Failed to import embedded`, `Slic3rRuntimeError`, `FATAL`, or `SIGSEGV`.
+   - Saved config (`files/slic3r.ini`) confirmed active project presets:
+     - `print = process template @Kreality Ender 3 Pro KlipperBlueBoy 0.4 nozzle`
+     - `printer = Kreality Ender 3 Pro KlipperBlueBoy 0.4 nozzle`
+     - `filament = Generic PLA @System`
+   - Imported project settings include `curr_bed_type = High Temp Plate` and a `[filament:Generic PLA @System]` section with PLA/nozzle/bed temps from the project.
+
 ## ⚠️ CURRENT STATE / IMMEDIATE NEXT STEP
 
-- Follow-up verification after this handoff: `./gradlew :app:assembleDebug --no-daemon --console=plain --rerun-tasks` completed successfully with `:app:compileDebugJavaWithJavac`, dexing, and `:app:packageDebug` executed (not stale/up-to-date-only). Generated APK: `app/build/outputs/apk/debug/OrcaSlicerMobile_6d20c87c77.apk` (59,174,943 bytes). Installed to adb device `R5CR60DKJGB` with `adb install -r` → `Success`.
-- Bytecode check confirmed the installed-build source path contains the Round-3 fix: `IOUtils.configJsonToIni()` switches on `type` and writes `ConfigObject.profileListType` to 0/1/2 for `process`/`filament`/`machine` before import inheritance processing.
-- **Next step is behavioral on-device verification**: have the user wipe app data (or fresh install), import `/home/cody/Desktop/Kreality Ender 3 Pro KlipperBlueBoy 0.4 nozzle.orca_printer` at the setup screen, and check: printer chip shows "Kreality Ender 3 Pro KlipperBlueBoy 0.4 nozzle" selected, filament selector shows a PLA template selected, and selections survive navigating away/back. Do not commit until that passes.
+- 3MF geometry + project-profile import is verified on-device for the user's Orca Desktop `3DBenchy.3mf`.
+- Multi-plate support is currently layout-preserving import + plate count reporting; there is no separate mobile plate selector UI yet.
+- `.orca_printer` `profileListType` fix was also verified by the user earlier in this continuation.
+- NOTHING from this session is committed. Suggested commit after final user approval: `git add -A && git commit -m "Fix profile import and Orca 3MF project loading" && git push origin engine-swap:master`.
 
 ## Remaining known gaps / ideas (not started)
 

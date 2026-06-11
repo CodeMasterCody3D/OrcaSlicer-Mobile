@@ -390,7 +390,11 @@ extern "C" {
         ModelRef* ref;
         try {
             ref = new ModelRef();
-            ref->model = Model::read_from_file(std::string(chars), nullptr, nullptr, LoadStrategy::AddDefaultInstances);
+            LoadStrategy load_strategy = LoadStrategy::AddDefaultInstances;
+            if (boost::algorithm::iends_with(std::string(chars), ".3mf")) {
+                load_strategy = LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel;
+            }
+            ref->model = Model::read_from_file(std::string(chars), nullptr, nullptr, load_strategy);
             ref->base_name = std::string(baseChars);
         } catch (const Slic3r::RuntimeError& e) {
             env->ThrowNew(env->FindClass("ru/ytkab0bp/slicebeam/slic3r/Slic3rRuntimeError"), e.what());

@@ -725,7 +725,15 @@ public class BedFragment extends Fragment {
         return glView;
     }
 
+    public interface ModelLoadCallback {
+        void onLoaded(Model loadedModel, int firstNewObject, int addedObjects);
+    }
+
     public void loadModel(File f) throws Slic3rRuntimeError {
+        loadModel(f, false, null);
+    }
+
+    public void loadModel(File f, boolean preserveProjectLayout, ModelLoadCallback callback) throws Slic3rRuntimeError {
         Model m = new Model(f);
         if (model != null) {
             glView.queueEvent(new Runnable() {
@@ -736,22 +744,31 @@ public class BedFragment extends Fragment {
                         ViewUtils.postOnMainThread(()-> glView.queueEvent(this));
                         return;
                     }
-                    Vec3d objMin = new Vec3d(), objMax = new Vec3d();
-                    Vec3d objTranslate = new Vec3d();
-                    for (int i = 0; i < m.getObjectsCount(); i++) {
-                        m.getTranslation(i, objTranslate);
-                        m.getBoundingBoxExact(i, objMin, objMax);
-                        // Only fix Z (floor level); arrange will handle X/Y placement
-                        m.translate(i, objTranslate.x, objTranslate.y, -objTranslate.z + (objMax.z - objMin.z) / 2);
+                    int firstNewObject = model.getObjectsCount();
+                    int addedObjects = m.getObjectsCount();
+                    if (!preserveProjectLayout) {
+                        Vec3d objMin = new Vec3d(), objMax = new Vec3d();
+                        Vec3d objTranslate = new Vec3d();
+                        for (int i = 0; i < addedObjects; i++) {
+                            m.getTranslation(i, objTranslate);
+                            m.getBoundingBoxExact(i, objMin, objMax);
+                            // Only fix Z (floor level); arrange will handle X/Y placement.
+                            m.translate(i, objTranslate.x, objTranslate.y, -objTranslate.z + (objMax.z - objMin.z) / 2);
+                        }
                     }
 
-                    for (int i = 0; i < m.getObjectsCount(); i++) {
+                    for (int i = 0; i < addedObjects; i++) {
                         model.addObject(m, i);
                     }
                     m.release();
                     model.resetBoundingBox();
-                    bed.arrange(model);
+                    if (!preserveProjectLayout) {
+                        bed.arrange(model);
+                    }
                     glView.getRenderer().resetGlModels();
+                    if (callback != null) {
+                        callback.onLoaded(model, firstNewObject, addedObjects);
+                    }
                 }
             });
         } else {
@@ -764,15 +781,21 @@ public class BedFragment extends Fragment {
                         return;
                     }
                     glView.getRenderer().setModel(model = m);
+                    int addedObjects = m.getObjectsCount();
 
-                    Vec3d center = bed.getVolumeMin().center(bed.getVolumeMax());
-                    Vec3d objMin = new Vec3d(), objMax = new Vec3d();
-                    Vec3d objTranslate = new Vec3d();
-                    for (int i = 0; i < m.getObjectsCount(); i++) {
-                        m.getTranslation(i, objTranslate);
-                        m.getBoundingBoxExact(i, objMin, objMax);
+                    if (!preserveProjectLayout) {
+                        Vec3d center = bed.getVolumeMin().center(bed.getVolumeMax());
+                        Vec3d objMin = new Vec3d(), objMax = new Vec3d();
+                        Vec3d objTranslate = new Vec3d();
+                        for (int i = 0; i < addedObjects; i++) {
+                            m.getTranslation(i, objTranslate);
+                            m.getBoundingBoxExact(i, objMin, objMax);
 
-                        m.translate(i, -objTranslate.x + center.x, -objTranslate.y + center.y, -objTranslate.z + (objMax.z - objMin.z) / 2);
+                            m.translate(i, -objTranslate.x + center.x, -objTranslate.y + center.y, -objTranslate.z + (objMax.z - objMin.z) / 2);
+                        }
+                    }
+                    if (callback != null) {
+                        callback.onLoaded(model, 0, addedObjects);
                     }
                 }
             });

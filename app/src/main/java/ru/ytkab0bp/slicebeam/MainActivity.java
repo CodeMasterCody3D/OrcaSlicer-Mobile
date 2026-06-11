@@ -14,6 +14,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Process;
 import android.provider.MediaStore;
+import android.text.TextUtils;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -46,6 +47,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 import ru.ytkab0bp.sapil.APICallback;
@@ -430,7 +432,302 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean isOrcaBundleFile(String fileName) {
-        return fileName.endsWith(".orca_printer") || fileName.endsWith(".orca_filament") || fileName.endsWith(".zip");
+        String lower = fileName.toLowerCase();
+        return lower.endsWith(".orca_printer") || lower.endsWith(".orca_filament") || lower.endsWith(".zip");
+    }
+
+    private boolean is3mfFile(String fileName) {
+        return fileName != null && fileName.toLowerCase().endsWith(".3mf");
+    }
+
+    private boolean isGcodeFile(String fileName) {
+        if (fileName == null) return false;
+        String lower = fileName.toLowerCase();
+        return lower.endsWith(".gcode") || lower.endsWith(".g") || lower.endsWith(".gco") || lower.endsWith(".bgcode");
+    }
+
+    private boolean isSupportedModelFile(String fileName) {
+        if (fileName == null) return false;
+        String lower = fileName.toLowerCase();
+        // Keep this list in sync with libslic3r::Model::read_from_file() on Android.
+        return lower.endsWith(".stl") || lower.endsWith(".oltp") || lower.endsWith(".obj") ||
+                lower.endsWith(".3mf") || lower.endsWith(".amf") || lower.endsWith(".svg") ||
+                lower.endsWith(".drc") || isGcodeFile(lower);
+    }
+
+    private File getSafeCachedModelFile(String fileName) {
+        String safe = fileName.replaceAll("[\\/:*?\"<>|]", "_");
+        if (safe.trim().isEmpty()) {
+            safe = "model";
+        }
+        File f = new File(SliceBeam.getModelCacheDir(), safe);
+        if (!f.exists()) return f;
+
+        int dot = safe.lastIndexOf('.');
+        String base = dot > 0 ? safe.substring(0, dot) : safe;
+        String ext = dot > 0 ? safe.substring(dot) : "";
+        return new File(SliceBeam.getModelCacheDir(), base + "_" + UUID.randomUUID() + ext);
+    }
+
+    private static class Project3mfImportResult {
+        int importedProfiles;
+        int plateCount;
+    }
+
+    private String readZipEntryText(ZipFile zip, ZipEntry entry) throws IOException {
+        try (InputStream in = zip.getInputStream(entry); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[10240];
+            int c;
+            while ((c = in.read(buffer)) != -1) {
+                out.write(buffer, 0, c);
+            }
+            return out.toString("UTF-8");
+        }
+    }
+
+    private String embeddedPresetFallbackName(String path) {
+        String name = path;
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) name = name.substring(slash + 1);
+        if (name.endsWith(".config")) name = name.substring(0, name.length() - ".config".length());
+        return name;
+    }
+
+    private String jsonProfileName(JSONObject obj, String fallback) {
+        String name = obj.optString("name", null);
+        if (name == null || name.trim().isEmpty()) {
+            name = obj.optString("print_settings_id", null);
+        }
+        if (name == null || name.trim().isEmpty()) {
+            name = obj.optString("filament_settings_id", null);
+        }
+        if (name == null || name.trim().isEmpty()) {
+            name = obj.optString("printer_settings_id", null);
+        }
+        if (name == null || name.trim().isEmpty()) {
+            name = fallback;
+        }
+        if (name != null && name.length() > 3 && name.charAt(0) == '[' && name.charAt(1) == '"' && name.charAt(name.length() - 2) == '"' && name.charAt(name.length() - 1) == ']') {
+            name = name.substring(2, name.length() - 2);
+        }
+        return name;
+    }
+
+    private ConfigObject embeddedJsonToConfig(JSONObject obj, String type, List<String> supportedKeys, List<String> inBundle, String fallbackName) throws Exception {
+        ConfigObject cfg = IOUtils.configJsonToIni(obj, type, supportedKeys, inBundle);
+        String title = cfg.getTitle();
+        if (title == null || title.trim().isEmpty()) {
+            cfg.setTitle(jsonProfileName(obj, fallbackName));
+        }
+        return cfg;
+    }
+
+    private boolean hasConfigTitle(List<ConfigObject> configs, String title) {
+        if (title == null) return false;
+        for (ConfigObject cfg : configs) {
+            if (cfg != null && Objects.equals(cfg.getTitle(), title)) return true;
+        }
+        return false;
+    }
+
+    private ConfigObject projectSettingsToConfig(JSONObject projectSettings, String type, List<String> supportedKeys, String idKey, String fallbackName) throws Exception {
+        String selectedName = firstProjectValue(projectSettings, idKey);
+        if (selectedName == null || selectedName.trim().isEmpty()) selectedName = fallbackName;
+
+        JSONObject profile = new JSONObject(projectSettings.toString());
+        profile.remove("print_settings_id");
+        profile.remove("filament_settings_id");
+        profile.remove("printer_settings_id");
+        profile.put(idKey, selectedName);
+
+        List<String> inBundle = new ArrayList<>();
+        inBundle.add(selectedName);
+        return embeddedJsonToConfig(profile, type, supportedKeys, inBundle, selectedName);
+    }
+
+    private void addProjectSettingsFallbackProfiles(Slic3rConfigWrapper wrapper, JSONObject projectSettings) {
+        if (projectSettings == null) return;
+        try {
+            String printName = firstProjectValue(projectSettings, "print_settings_id");
+            if (!TextUtils.isEmpty(printName) && !hasConfigTitle(wrapper.printConfigs, printName)) {
+                wrapper.printConfigs.add(projectSettingsToConfig(projectSettings, "process", Slic3rConfigWrapper.PRINT_CONFIG_KEYS, "print_settings_id", printName));
+            }
+        } catch (Exception e) {
+            Log.w("MainActivity", "Skipping project_settings print profile fallback", e);
+        }
+        try {
+            String filamentName = firstProjectValue(projectSettings, "filament_settings_id");
+            if (!TextUtils.isEmpty(filamentName) && !hasConfigTitle(wrapper.filamentConfigs, filamentName)) {
+                wrapper.filamentConfigs.add(projectSettingsToConfig(projectSettings, "filament", Slic3rConfigWrapper.FILAMENT_CONFIG_KEYS, "filament_settings_id", filamentName));
+            }
+        } catch (Exception e) {
+            Log.w("MainActivity", "Skipping project_settings filament profile fallback", e);
+        }
+        try {
+            String printerName = firstProjectValue(projectSettings, "printer_settings_id");
+            if (!TextUtils.isEmpty(printerName) && !hasConfigTitle(wrapper.printerConfigs, printerName)) {
+                wrapper.printerConfigs.add(projectSettingsToConfig(projectSettings, "machine", Slic3rConfigWrapper.PRINTER_CONFIG_KEYS, "printer_settings_id", printerName));
+            }
+        } catch (Exception e) {
+            Log.w("MainActivity", "Skipping project_settings printer profile fallback", e);
+        }
+    }
+
+    private String firstProjectValue(JSONObject project, String key) {
+        if (project == null || !project.has(key)) return null;
+        try {
+            Object value = project.get(key);
+            if (value instanceof JSONArray) {
+                JSONArray arr = (JSONArray) value;
+                return arr.length() > 0 ? arr.optString(0, null) : null;
+            }
+            String s = String.valueOf(value);
+            if (s.startsWith("[") && s.endsWith("]")) {
+                JSONArray arr = new JSONArray(s);
+                return arr.length() > 0 ? arr.optString(0, null) : null;
+            }
+            return s;
+        } catch (Exception e) {
+            Log.w("MainActivity", "Failed to read project setting " + key, e);
+            return null;
+        }
+    }
+
+    private int countPlates(ZipFile zip) throws IOException {
+        int maxPlate = 0;
+        ZipEntry modelSettings = zip.getEntry("Metadata/model_settings.config");
+        if (modelSettings != null) {
+            String xml = readZipEntryText(zip, modelSettings);
+            int idx = 0;
+            while ((idx = xml.indexOf("<plate", idx)) != -1) {
+                maxPlate++;
+                idx += 6;
+            }
+        }
+        java.util.Enumeration<? extends ZipEntry> entries = zip.entries();
+        while (entries.hasMoreElements()) {
+            String name = entries.nextElement().getName();
+            if (name.startsWith("Metadata/plate_") && (name.endsWith(".png") || name.endsWith(".json") || name.endsWith(".gcode"))) {
+                String num = name.substring("Metadata/plate_".length());
+                int end = 0;
+                while (end < num.length() && Character.isDigit(num.charAt(end))) end++;
+                if (end > 0) {
+                    try {
+                        maxPlate = Math.max(maxPlate, Integer.parseInt(num.substring(0, end)));
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
+        return Math.max(maxPlate, 1);
+    }
+
+    private Project3mfImportResult importEmbedded3mfProfiles(File file) {
+        Project3mfImportResult result = new Project3mfImportResult();
+        Slic3rConfigWrapper w = new Slic3rConfigWrapper();
+        JSONObject projectSettings = null;
+        HashMap<String, JSONObject> processJson = new HashMap<>();
+        HashMap<String, JSONObject> filamentJson = new HashMap<>();
+        HashMap<String, JSONObject> printerJson = new HashMap<>();
+
+        try (ZipFile zip = new ZipFile(file)) {
+            result.plateCount = countPlates(zip);
+            java.util.Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (entry.isDirectory()) continue;
+                String name = entry.getName();
+                if (!name.startsWith("Metadata/") || !name.endsWith(".config")) continue;
+
+                if (name.equals("Metadata/project_settings.config")) {
+                    projectSettings = new JSONObject(readZipEntryText(zip, entry));
+                } else if (name.startsWith("Metadata/process_settings_") || name.startsWith("Metadata/print_setting_")) {
+                    processJson.put(name, new JSONObject(readZipEntryText(zip, entry)));
+                } else if (name.startsWith("Metadata/filament_settings_")) {
+                    filamentJson.put(name, new JSONObject(readZipEntryText(zip, entry)));
+                } else if (name.startsWith("Metadata/machine_settings_")) {
+                    printerJson.put(name, new JSONObject(readZipEntryText(zip, entry)));
+                }
+            }
+
+            List<String> processNames = new ArrayList<>();
+            for (String name : processJson.keySet()) processNames.add(jsonProfileName(processJson.get(name), embeddedPresetFallbackName(name)));
+            addInstalledProfileTitles(processNames, SliceBeam.CONFIG.printConfigs);
+            for (String name : processJson.keySet()) {
+                try {
+                    w.printConfigs.add(embeddedJsonToConfig(processJson.get(name), "process", Slic3rConfigWrapper.PRINT_CONFIG_KEYS, processNames, embeddedPresetFallbackName(name)));
+                } catch (Exception e) {
+                    Log.w("MainActivity", "Skipping embedded process profile " + name, e);
+                }
+            }
+            resolveBundleInherits(w.printConfigs, w::findPrint, name -> SliceBeam.CONFIG.findPrint(name));
+
+            List<String> filamentNames = new ArrayList<>();
+            for (String name : filamentJson.keySet()) filamentNames.add(jsonProfileName(filamentJson.get(name), embeddedPresetFallbackName(name)));
+            addInstalledProfileTitles(filamentNames, SliceBeam.CONFIG.filamentConfigs);
+            for (String name : filamentJson.keySet()) {
+                try {
+                    w.filamentConfigs.add(embeddedJsonToConfig(filamentJson.get(name), "filament", Slic3rConfigWrapper.FILAMENT_CONFIG_KEYS, filamentNames, embeddedPresetFallbackName(name)));
+                } catch (Exception e) {
+                    Log.w("MainActivity", "Skipping embedded filament profile " + name, e);
+                }
+            }
+            resolveBundleInherits(w.filamentConfigs, w::findFilament, name -> SliceBeam.CONFIG.findFilament(name));
+
+            List<String> printerNames = new ArrayList<>();
+            for (String name : printerJson.keySet()) printerNames.add(jsonProfileName(printerJson.get(name), embeddedPresetFallbackName(name)));
+            addInstalledProfileTitles(printerNames, SliceBeam.CONFIG.printerConfigs);
+            for (String name : printerJson.keySet()) {
+                try {
+                    w.printerConfigs.add(embeddedJsonToConfig(printerJson.get(name), "machine", Slic3rConfigWrapper.PRINTER_CONFIG_KEYS, printerNames, embeddedPresetFallbackName(name)));
+                } catch (Exception e) {
+                    Log.w("MainActivity", "Skipping embedded printer profile " + name, e);
+                }
+            }
+            resolveBundleInherits(w.printerConfigs, w::findPrinter, name -> SliceBeam.CONFIG.findPrinter(name));
+
+            // Some Orca/Bambu project 3MFs (including desktop-saved projects with DRC geometry)
+            // only store the active settings in Metadata/project_settings.config instead of
+            // separate process/filament/machine profile files. Convert that JSON into normal
+            // mobile ConfigObjects so the loaded project uses the printer, filament, and print
+            // settings it was saved with.
+            addProjectSettingsFallbackProfiles(w, projectSettings);
+
+            for (ConfigObject cfg : w.printConfigs) SliceBeam.CONFIG.importPrint(cfg);
+            for (ConfigObject cfg : w.filamentConfigs) SliceBeam.CONFIG.importFilament(cfg);
+            for (ConfigObject cfg : w.printerConfigs) SliceBeam.CONFIG.importPrinter(cfg);
+
+            String selectedPrint = firstProjectValue(projectSettings, "print_settings_id");
+            String selectedFilament = firstProjectValue(projectSettings, "filament_settings_id");
+            String selectedPrinter = firstProjectValue(projectSettings, "printer_settings_id");
+            if ((selectedPrint == null || selectedPrint.trim().isEmpty()) && !w.printConfigs.isEmpty()) selectedPrint = w.printConfigs.get(0).getTitle();
+            if ((selectedFilament == null || selectedFilament.trim().isEmpty()) && !w.filamentConfigs.isEmpty()) selectedFilament = w.filamentConfigs.get(0).getTitle();
+            if ((selectedPrinter == null || selectedPrinter.trim().isEmpty()) && !w.printerConfigs.isEmpty()) selectedPrinter = w.printerConfigs.get(0).getTitle();
+
+            boolean changed = false;
+            if (selectedPrint != null && SliceBeam.CONFIG.findPrint(selectedPrint) != null) {
+                SliceBeam.CONFIG.presets.put("print", selectedPrint);
+                changed = true;
+            }
+            if (selectedFilament != null && SliceBeam.CONFIG.findFilament(selectedFilament) != null) {
+                SliceBeam.CONFIG.presets.put("filament", selectedFilament);
+                changed = true;
+            }
+            if (selectedPrinter != null && SliceBeam.CONFIG.findPrinter(selectedPrinter) != null) {
+                SliceBeam.CONFIG.presets.put("printer", selectedPrinter);
+                changed = true;
+            }
+
+            result.importedProfiles = w.printConfigs.size() + w.filamentConfigs.size() + w.printerConfigs.size();
+            if (changed || result.importedProfiles > 0) {
+                SliceBeam.clearLiveDiffs();
+                SliceBeam.saveConfig();
+            }
+        } catch (Exception e) {
+            // Geometry loading should still proceed for a valid 3MF even when embedded settings are absent
+            // or too new for the mobile converter.
+            Log.w("MainActivity", "Failed to import embedded 3MF profiles from " + file, e);
+        }
+        return result;
     }
 
     private void deleteRecursively(File file) {
@@ -775,37 +1072,62 @@ public class MainActivity extends AppCompatActivity {
             if (delegate.getCurrentFragment() instanceof BedFragment) {
                 BedFragment fragment = (BedFragment) delegate.getCurrentFragment();
                 try {
-                    boolean gcode = f.getName().endsWith(".gcode");
+                    boolean gcode = isGcodeFile(f.getName());
+                    boolean project3mf = is3mfFile(f.getName());
+                    Project3mfImportResult projectImport = project3mf ? importEmbedded3mfProfiles(f) : new Project3mfImportResult();
                     if (gcode) {
                         fragment.loadGCode(f);
+                        fragment.getGlView().queueEvent(new Runnable() {
+                            @Override
+                            public void run() {
+                                Model model = fragment.getGlView().getRenderer().getModel();
+                                if (model == null || fragment.getGlView().getRenderer().getBed() == null) {
+                                    fragment.getGlView().queueEvent(this);
+                                    return;
+                                }
+                                SliceBeam.EVENT_BUS.fireEvent(new NeedDismissSnackbarEvent(tag));
+                                SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(R.string.MenuFileOpenFileLoaded));
+                            }
+                        });
                     } else {
-                        fragment.loadModel(f);
-                    }
-                    fragment.getGlView().queueEvent(new Runnable() {
-                        @Override
-                        public void run() {
-                            Model model = fragment.getGlView().getRenderer().getModel();
+                        fragment.loadModel(f, project3mf, (model, firstNewObject, addedObjects) -> {
                             if (model == null || fragment.getGlView().getRenderer().getBed() == null) {
-                                fragment.getGlView().queueEvent(this);
                                 return;
                             }
 
-                            if (!gcode) {
-                                SliceBeam.EVENT_BUS.fireEvent(new ObjectsListChangedEvent());
+                            SliceBeam.EVENT_BUS.fireEvent(new ObjectsListChangedEvent());
+                            boolean bigObject = false;
+                            for (int i = firstNewObject; i < firstNewObject + addedObjects; i++) {
+                                if (autoorient && !project3mf) {
+                                    model.autoOrient(i);
+                                    fragment.getGlView().getRenderer().invalidateGlModel(i);
+                                }
+                                if (model.isBigObject(i)) {
+                                    bigObject = true;
+                                }
                             }
-                            int i = model.getObjectsCount() - 1;
-                            if (autoorient) {
-                                model.autoOrient(i);
-                                fragment.getGlView().getRenderer().invalidateGlModel(i);
+                            if (autoorient && !project3mf) {
                                 fragment.getGlView().requestRender();
                             }
                             SliceBeam.EVENT_BUS.fireEvent(new NeedDismissSnackbarEvent(tag));
-                            SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(R.string.MenuFileOpenFileLoaded));
-                            if (model.isBigObject(i)) {
+                            if (project3mf) {
+                                StringBuilder message = new StringBuilder("3MF project loaded");
+                                if (projectImport.plateCount > 1) {
+                                    message.append(" (").append(projectImport.plateCount).append(" plates)");
+                                }
+                                if (projectImport.importedProfiles > 0) {
+                                    message.append("; imported ").append(projectImport.importedProfiles).append(" embedded profiles");
+                                }
+                                message.append('.');
+                                SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(message.toString()));
+                            } else {
+                                SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(R.string.MenuFileOpenFileLoaded));
+                            }
+                            if (bigObject) {
                                 SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(SnackbarsLayout.Type.WARNING, R.string.MenuFileOpenFileBigObject));
                             }
-                        }
-                    });
+                        });
+                    }
                 } catch (Slic3rRuntimeError e) {
                     Log.e("MainActivity", "Failed to load model", e);
                     f.delete();
@@ -826,6 +1148,9 @@ public class MainActivity extends AppCompatActivity {
 
         ContentResolver resolver = getContentResolver();
         String fileName = IOUtils.getDisplayName(uri);
+        if (fileName == null && "file".equals(uri.getScheme())) {
+            fileName = uri.getLastPathSegment();
+        }
         if (fileName == null) {
             new BeamAlertDialogBuilder(this)
                     .setTitle(R.string.MenuFileOpenFileFailed)
@@ -851,11 +1176,22 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        File f = new File(SliceBeam.getModelCacheDir(), fileName);
-        // TODO: Check if file already exists
+        if (!isSupportedModelFile(fileName)) {
+            new BeamAlertDialogBuilder(this)
+                    .setTitle(R.string.MenuFileOpenFileFailed)
+                    .setMessage("Unsupported file type: " + fileName)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+            return;
+        }
+
+        File f = getSafeCachedModelFile(fileName);
         IOUtils.IO_POOL.submit(()->{
             try {
                 InputStream in = resolver.openInputStream(uri);
+                if (in == null) {
+                    throw new FileNotFoundException(String.valueOf(uri));
+                }
                 FileOutputStream fos = new FileOutputStream(f);
                 byte[] buffer = new byte[10240]; int c;
                 while ((c = in.read(buffer)) != -1) {
