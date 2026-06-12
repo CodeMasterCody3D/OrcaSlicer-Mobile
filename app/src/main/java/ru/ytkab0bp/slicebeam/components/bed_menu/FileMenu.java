@@ -125,9 +125,6 @@ public class FileMenu extends ListBedMenu {
                         act.startActivityForResult(i, MainActivity.REQUEST_CODE_OPEN_FILE);
                     }
                 }),
-                new BedMenuItem(R.string.MenuPlates, R.drawable.square_stack_up_outline_28).onClick(v -> {
-                    fragment.showPlatesMenu(v);
-                }),
                 new BedMenuItem(R.string.MenuFileDelete, R.drawable.delete_outline_android_28).setEnabled(hasSelection()).onClick(v -> {
                     if (fragment.getGlView().getRenderer().getModel() == null) return;
 

@@ -29,6 +29,7 @@ import ru.ytkab0bp.slicebeam.R;
 import ru.ytkab0bp.slicebeam.SliceBeam;
 import ru.ytkab0bp.slicebeam.components.BeamAlertDialogBuilder;
 import ru.ytkab0bp.slicebeam.components.UnfoldMenu;
+import ru.ytkab0bp.slicebeam.events.NeedSnackbarEvent;
 import ru.ytkab0bp.slicebeam.events.ObjectsListChangedEvent;
 import ru.ytkab0bp.slicebeam.events.SelectedObjectChangedEvent;
 import ru.ytkab0bp.slicebeam.recycler.PreferenceSwitchItem;
@@ -47,62 +48,92 @@ public class TransformMenu extends ListBedMenu {
     private double[] tempMatrix = new double[16];
     private double[] tempVecArr = new double[4];
 
+    // Toolbar items that should only be enabled when an object is selected.
+    private final java.util.List<BedMenuItem> selectionItems = new java.util.ArrayList<>();
+
     private boolean hasSelection() {
         return fragment.getGlView().getRenderer().getModel() != null && fragment.getGlView().getRenderer().getSelectedObject() != -1;
     }
 
     @Override
     protected List<SimpleRecyclerItem> onCreateItems(boolean portrait) {
-        return Arrays.asList(
-                new BedMenuItem(R.string.MenuTransformScale, R.drawable.arrow_up_right_corner_outline_24).setEnabled(hasSelection()).onClick(v -> fragment.showUnfoldMenu(new ScaleMenu(), v)),
-                new BedMenuItem(R.string.MenuTransformCut, R.drawable.menu_transform_cut_or_mirror_28).setEnabled(hasSelection()).onClick(v -> fragment.showUnfoldMenu(new CutMenu(), v)),
-                new BedMenuItem(R.string.MenuTransformPaint, R.drawable.paint_roller_outline_28).setEnabled(hasSelection()).onClick(v -> {
-                    int objectIndex = fragment.getGlView().getRenderer().getSelectedObject();
-                    if (objectIndex != -1) {
-                        fragment.enterPaintMode(objectIndex);
-                    }
-                }),
-                new BedMenuItem(R.string.MenuTransformMirror, R.drawable.menu_transform_cut_or_mirror_28).setEnabled(hasSelection()).onClick(v -> {
-                    Context ctx = fragment.getContext();
-                    new BeamAlertDialogBuilder(ctx)
-                            .setTitle(R.string.MenuTransformMirror)
-                            .setItems(new CharSequence[] {
-                                    ctx.getString(R.string.MenuTransformMirrorX),
-                                    ctx.getString(R.string.MenuTransformMirrorY),
-                                    ctx.getString(R.string.MenuTransformMirrorZ)
-                            }, (dialog, which) -> {
-                                Model model = fragment.getGlView().getRenderer().getModel();
-                                Vec3d tempVec = new Vec3d();
-                                int j = fragment.getGlView().getRenderer().getSelectedObject();
-                                model.getMirror(j, tempVec);
+        selectionItems.clear();
+        java.util.List<SimpleRecyclerItem> items = new java.util.ArrayList<>();
 
-                                double dx = tempVec.x, dy = tempVec.y, dz = tempVec.z;
+        // --- Plate management (always available) ---
+        items.add(new BedMenuItem(R.string.MenuPlates, R.drawable.square_stack_up_outline_28)
+                .onClick(v -> fragment.showPlatesMenu(v)));
 
-                                switch (which) {
-                                    case 0:
-                                        dx = -dx;
-                                        break;
-                                    case 1:
-                                        dy = -dy;
-                                        break;
-                                    case 2:
-                                        dz = -dz;
-                                        break;
-                                }
+        // --- Auto orient (needs a selected object) ---
+        items.add(selection(new BedMenuItem(R.string.MenuOrientationAutoOrient, R.drawable.menu_orientation_auto_28).onClick(v -> {
+            int i = fragment.getGlView().getRenderer().getSelectedObject();
+            if (i == -1) return;
+            fragment.getGlView().getRenderer().getModel().autoOrient(i);
+            fragment.getGlView().getRenderer().invalidateGlModel(i);
+            fragment.getGlView().requestRender();
+            SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(R.string.MenuOrientationAutoOrientDone));
+        })));
 
-                                model.getScale(j, tempVec);
-                                dx *= tempVec.x;
-                                dy *= tempVec.y;
-                                dz *= tempVec.z;
+        // --- Arrange all objects (always available) ---
+        items.add(new BedMenuItem(R.string.MenuOrientationArrange, R.drawable.grid_layout_outline_28).onClick(v -> {
+            fragment.getGlView().arrange();
+            fragment.getGlView().queueEvent(() -> {
+                if (fragment.getGlView().getRenderer().invalidateFlattenMode()) fragment.getGlView().requestRender();
+            });
+            SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(R.string.MenuOrientationArrangeFinished));
+        }).setEnabled(fragment.getGlView().getRenderer().getModel() != null));
 
-                                model.scale(j, dx, dy, dz);
-                                fragment.getGlView().getRenderer().invalidateGlModel(j);
-                                fragment.getGlView().requestRender();
-                            })
-                            .setNegativeButton(android.R.string.cancel, null)
-                            .show();
-                })
-        );
+        // --- Not yet implemented (each is its own feature; show a clear message for now) ---
+        items.add(notImplemented(R.string.MenuToolbarSplit, R.drawable.menu_transform_cut_or_mirror_28));
+        items.add(notImplemented(R.string.MenuToolbarVariableLayerHeight, R.drawable.sliders_outline_28));
+        items.add(selection(new BedMenuItem(R.string.MenuToolbarMove, R.drawable.menu_orientation_position_28)
+                .onClick(v -> fragment.showUnfoldMenu(new OrientationMenu().new PositionMenu(), v))));
+        items.add(selection(new BedMenuItem(R.string.MenuToolbarRotate, R.drawable.menu_orientation_rotation_28)
+                .onClick(v -> fragment.showUnfoldMenu(new OrientationMenu().new RotationMenu(), v))));
+
+        // --- Scale (existing) ---
+        items.add(selection(new BedMenuItem(R.string.MenuTransformScale, R.drawable.arrow_up_right_corner_outline_24)
+                .onClick(v -> fragment.showUnfoldMenu(new ScaleMenu(), v))));
+
+        // --- Lay on face (existing flatten mode) ---
+        items.add(selection(new BedMenuItem(R.string.MenuOrientationFlatten, R.drawable.menu_orientation_flatten_28)
+                .setCheckable((b, checked) -> {
+                    fragment.getGlView().getRenderer().setInFlattenMode(checked);
+                    fragment.getGlView().requestRender();
+                }, false)));
+
+        // --- Cut (existing) ---
+        items.add(selection(new BedMenuItem(R.string.MenuTransformCut, R.drawable.menu_transform_cut_or_mirror_28)
+                .onClick(v -> fragment.showUnfoldMenu(new CutMenu(), v))));
+
+        // --- Painting tools ---
+        items.add(notImplemented(R.string.MenuToolbarSupportPaint, R.drawable.paint_roller_outline_28));
+        items.add(notImplemented(R.string.MenuToolbarSeamPaint, R.drawable.paint_roller_outline_28));
+        items.add(notImplemented(R.string.MenuToolbarFuzzyPaint, R.drawable.paint_roller_outline_28));
+        items.add(selection(new BedMenuItem(R.string.MenuToolbarColorPaint, R.drawable.paint_roller_outline_28).onClick(v -> {
+            int objectIndex = fragment.getGlView().getRenderer().getSelectedObject();
+            if (objectIndex != -1) fragment.enterPaintMode(objectIndex);
+        })));
+
+        // --- Misc ---
+        items.add(notImplemented(R.string.MenuToolbarEmboss, R.drawable.edit_outline_28));
+        items.add(notImplemented(R.string.MenuToolbarMeasure, R.drawable.wrench_outline_28));
+
+        boolean sel = hasSelection();
+        for (BedMenuItem it : selectionItems) it.setEnabled(sel);
+        return items;
+    }
+
+    private BedMenuItem selection(BedMenuItem item) {
+        selectionItems.add(item);
+        return item;
+    }
+
+    private BedMenuItem notImplemented(int titleRes, int iconRes) {
+        return new BedMenuItem(titleRes, iconRes).onClick(v ->
+                SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(
+                        SliceBeam.INSTANCE.getString(R.string.MenuToolbarNotImplemented,
+                                SliceBeam.INSTANCE.getString(titleRes).replace("\n", " ")))));
     }
 
     @EventHandler(runOnMainThread = true)
@@ -119,7 +150,7 @@ public class TransformMenu extends ListBedMenu {
         boolean enabled = hasSelection();
         for (int i = 0; i < adapter.getItems().size(); i++) {
             SimpleRecyclerItem item = adapter.getItems().get(i);
-            if (item instanceof BedMenuItem) {
+            if (item instanceof BedMenuItem && selectionItems.contains(item)) {
                 ((BedMenuItem) item).setEnabled(enabled);
                 adapter.notifyItemChanged(i);
             }

@@ -122,6 +122,18 @@
     <string name="MenuOrientationRotationApply">Apply</string>
     <string name="MenuOrientationPositionBack">Back</string>
     <string name="MenuTransform">Transform</string>
+    <string name="MenuToolbar">Toolbar</string>
+    <string name="MenuToolbarNotImplemented">%1$s isn\'t available yet.</string>
+    <string name="MenuToolbarSplit">Split</string>
+    <string name="MenuToolbarVariableLayerHeight">Layer\nheight</string>
+    <string name="MenuToolbarMove">Move</string>
+    <string name="MenuToolbarRotate">Rotate</string>
+    <string name="MenuToolbarSupportPaint">Support\npaint</string>
+    <string name="MenuToolbarSeamPaint">Seam\npaint</string>
+    <string name="MenuToolbarFuzzyPaint">Fuzzy\nskin</string>
+    <string name="MenuToolbarColorPaint">Color\npaint</string>
+    <string name="MenuToolbarEmboss">Emboss</string>
+    <string name="MenuToolbarMeasure">Measure</string>
     <string name="MenuTransformScale">Scale</string>
     <string name="MenuTransformScaleLink">Save aspect ratio</string>
     <string name="MenuTransformScaleXValue">X = %1$.2f %% | %2$.2f mm</string>

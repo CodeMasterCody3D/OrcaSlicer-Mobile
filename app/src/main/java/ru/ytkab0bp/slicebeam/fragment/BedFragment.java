@@ -90,9 +90,6 @@ public class BedFragment extends Fragment {
                     case CAMERA:
                         menu = new CameraMenu();
                         break;
-                    case ORIENTATION:
-                        menu = new OrientationMenu();
-                        break;
                     case TRANSFORM:
                         menu = new TransformMenu();
                         break;
@@ -1221,8 +1218,7 @@ public class BedFragment extends Fragment {
     public enum MenuCategory {
         FILE(R.string.MenuFile, R.drawable.folder_simple_outline_28),
         CAMERA(R.string.MenuCamera, R.drawable.camera_outline_28),
-        ORIENTATION(R.string.MenuOrientation, R.drawable.menu_orientation_28),
-        TRANSFORM(R.string.MenuTransform, R.drawable.menu_scale_28),
+        TRANSFORM(R.string.MenuToolbar, R.drawable.menu_scale_28),
 //        MODIFIERS(R.string.MenuModifiers, R.drawable.sliders_outline_28),
         SLICE_AND_EXPORT(R.string.MenuSlice, R.drawable.magic_wand_outline_28);
 
