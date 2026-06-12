@@ -1067,7 +1067,10 @@ extern "C" {
             }
             Emboss::FontFileWithCache font_with_cache(std::move(font_file));
 
-            // 2) Generate 2D shapes
+            // 2) Generate 2D shapes. text2shapes output is in FONT units (scaled by SHAPE_SCALE),
+            // NOT millimeters — it must go through ProjectScale with get_text_shape_scale, exactly
+            // like desktop's text pipeline. Skipping the scale produces a kilometer-sized mesh that
+            // blows up the scene bounding box ("model disappears") and crashes slicing.
             FontProp font_prop(size);
             HealedExPolygons healed_shapes = Emboss::text2shapes(font_with_cache, text.c_str(), font_prop);
             if (healed_shapes.expolygons.empty()) {
@@ -1075,19 +1078,42 @@ extern "C" {
                 return;
             }
 
-            // 3) Create transformation and projection onto surface
+            // 3) Project to a small, correctly scaled mesh at the origin: XY in mm, Z in [0, depth].
+            double scale = Emboss::get_text_shape_scale(font_prop, *font_with_cache.font_file);
+            auto project_z = std::make_unique<Emboss::ProjectZ>((double) depth / scale);
+            Emboss::ProjectScale project(std::move(project_z), scale);
+            indexed_triangle_set its = Emboss::polygons2model(healed_shapes.expolygons, project);
+            if (its.indices.empty()) {
+                env->ThrowNew(env->FindClass("java/lang/RuntimeException"), "Text produced no geometry");
+                return;
+            }
+
+            // 4) Center the text on its origin and sink it half a depth, so the volume sits
+            // centered on the tap point and overlaps the surface (clean union for emboss, real
+            // overlap for engraving with a negative volume).
+            {
+                BoundingBoxf3 bb = bounding_box(its);
+                Vec3d c = bb.center();
+                its_translate(its, Vec3f((float) -c.x(), (float) -c.y(), (float) (-depth / 2.f)));
+            }
+
+            // 5) Orient local +Z along the surface normal at the tap point. The raycast hit is in
+            // object-world space (instance transform applied), but volumes live in object-local
+            // space, so pull the instance transform back out.
             Vec3d position(px, py, pz);
             Vec3d normal(nx, ny, nz);
-            Transform3d matrix = Emboss::create_transformation_onto_surface(position, normal);
-            Emboss::OrthoProject projection(matrix, normal * depth);
+            if (normal.norm() < 1e-9) normal = Vec3d::UnitZ(); else normal.normalize();
+            Transform3d world_tr = Emboss::create_transformation_onto_surface(position, normal);
+            Transform3d inst_tr = Transform3d::Identity();
+            if (!obj->instances.empty() && obj->instances.front() != nullptr)
+                inst_tr = obj->instances.front()->get_matrix();
 
-            // 4) Convert to 3D model (indexed_triangle_set)
-            indexed_triangle_set its = Emboss::polygons2model(healed_shapes.expolygons, projection);
-
-            // 5) Add volume to model object
-            TriangleMesh mesh(std::move(its));
+            // 6) Add as a volume with its own transformation (geometry stays centered at origin).
             ModelVolumeType vol_type = static_cast<ModelVolumeType>(type);
-            obj->add_volume(std::move(mesh), vol_type, true);
+            ModelVolume* vol = obj->add_volume(TriangleMesh(std::move(its)), vol_type, false);
+            vol->set_transformation(Geometry::Transformation(inst_tr.inverse() * world_tr));
+            vol->name = text;
+            obj->invalidate_bounding_box();
         } catch (const std::exception& e) {
             env->ThrowNew(env->FindClass("java/lang/RuntimeException"), e.what());
         }

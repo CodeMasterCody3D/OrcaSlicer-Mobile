@@ -70,7 +70,7 @@ public class EmbossModeView extends FrameLayout {
         // Text input field
         textInput = new EditText(ctx);
         textInput.setHint("Text to emboss");
-        textInput.setText("SliceBeam");
+        textInput.setText("OrcaSlicer Mobile");
         textInput.setSingleLine(true);
         panel.addView(createStyledInput(ctx, "Text:", textInput), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
