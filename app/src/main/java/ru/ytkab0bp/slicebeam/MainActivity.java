@@ -1091,7 +1091,9 @@ public class MainActivity extends AppCompatActivity {
                         });
                     } else {
                         fragment.loadModel(f, project3mf, projectImport != null ? projectImport.plateCount : 1, (model, firstNewObject, addedObjects) -> {
+                            android.util.Log.e("MainActivity", "loadModel callback fired: model=" + (model != null ? model.getPointer() : "null") + " firstNew=" + firstNewObject + " added=" + addedObjects);
                             if (model == null || fragment.getGlView().getRenderer().getBed() == null) {
+                                android.util.Log.e("MainActivity", "Returning early because model or bed is null");
                                 return;
                             }
 
@@ -1129,11 +1131,19 @@ public class MainActivity extends AppCompatActivity {
                         });
                     }
                 } catch (Slic3rRuntimeError e) {
-                    Log.e("MainActivity", "Failed to load model", e);
+                    android.util.Log.e("MainActivity", "Failed to load model", e);
                     f.delete();
 
                     SliceBeam.EVENT_BUS.fireEvent(new NeedDismissSnackbarEvent(tag));
-                    ViewUtils.postOnMainThread(() -> new BeamAlertDialogBuilder(this)
+                    ViewUtils.postOnMainThread(() -> new BeamAlertDialogBuilder(MainActivity.this)
+                            .setTitle(R.string.MenuFileOpenFileFailed)
+                            .setMessage(e.toString())
+                            .setPositiveButton(android.R.string.ok, null)
+                            .show());
+                } catch (Exception e) {
+                    android.util.Log.e("MainActivity", "Silent crash in loadFile", e);
+                    SliceBeam.EVENT_BUS.fireEvent(new NeedDismissSnackbarEvent(tag));
+                    ViewUtils.postOnMainThread(() -> new BeamAlertDialogBuilder(MainActivity.this)
                             .setTitle(R.string.MenuFileOpenFileFailed)
                             .setMessage(e.toString())
                             .setPositiveButton(android.R.string.ok, null)

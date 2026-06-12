@@ -10,6 +10,10 @@
     <string name="SlotAppSettings">App</string>
     <string name="SlotAppSettingsTooltip">App settings</string>
     <string name="MenuFile">File</string>
+    <string name="MenuPlates">Plates</string>
+    <string name="MenuAddPlate">Add plate</string>
+    <string name="MenuSwitchPlate">Switch plate</string>
+    <string name="MenuRemovePlate">Remove plate</string>
     <string name="MenuFileOpen">Open model</string>
     <string name="MenuFileOpenFileLoaded">File loaded.</string>
     <string name="MenuFileOpenFileFailed">Failed to open model</string>

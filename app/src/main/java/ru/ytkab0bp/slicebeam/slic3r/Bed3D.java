@@ -12,6 +12,7 @@ import ru.ytkab0bp.slicebeam.theme.ThemesRepo;
 import ru.ytkab0bp.slicebeam.utils.DoubleMatrix;
 import ru.ytkab0bp.slicebeam.utils.Vec3d;
 import ru.ytkab0bp.slicebeam.utils.ViewUtils;
+import androidx.core.graphics.ColorUtils;
 
 public class Bed3D {
     private final static float GROUND_Z = -0.02f;
@@ -84,6 +85,10 @@ public class Bed3D {
     }
 
     public void render(GLShadersManager shadersManager, boolean bottom, double[] viewModelMatrix, double[] projectionMatrix, float invZoom) {
+        render(shadersManager, bottom, viewModelMatrix, projectionMatrix, invZoom, true);
+    }
+
+    public void render(GLShadersManager shadersManager, boolean bottom, double[] viewModelMatrix, double[] projectionMatrix, float invZoom, boolean isActive) {
         assertTrue(viewModelMatrix.length == 16);
         assertTrue(projectionMatrix.length == 16);
 
@@ -92,11 +97,13 @@ public class Bed3D {
             DoubleMatrix.translateM(modelMatrix, 0, -getVolumeMin().x * 2, -getVolumeMin().y * 2, -getVolumeMin().z);
         }
         DoubleMatrix.multiplyMM(outModelMatrix, 0, viewModelMatrix, 0, modelMatrix, 0);
-        renderDefaultBed(shadersManager, bottom, outModelMatrix, projectionMatrix);
-        axes.render(shadersManager, viewModelMatrix, projectionMatrix, 0.25f, invZoom);
+        renderDefaultBed(shadersManager, bottom, outModelMatrix, projectionMatrix, isActive);
+        if (isActive) {
+            axes.render(shadersManager, viewModelMatrix, projectionMatrix, 0.25f, invZoom);
+        }
     }
 
-    private void renderDefaultBed(GLShadersManager shadersManager, boolean bottom, double[] viewModelMatrix, double[] projectionMatrix) {
+    private void renderDefaultBed(GLShadersManager shadersManager, boolean bottom, double[] viewModelMatrix, double[] projectionMatrix, boolean isActive) {
         GLShaderProgram shader = shadersManager.get(GLShadersManager.SHADER_FLAT);
         shader.startUsing();
 
@@ -109,16 +116,28 @@ public class Bed3D {
 
         if (!bottom) {
             glDepthMask(false);
-            triangles.setColor(ThemesRepo.getColor(R.attr.defaultBedColor));
+            int bedColor = ThemesRepo.getColor(R.attr.defaultBedColor);
+            if (!isActive) {
+                bedColor = ColorUtils.blendARGB(bedColor, 0xFF444444, 0.5f);
+            }
+            triangles.setColor(bedColor);
             triangles.render();
             glDepthMask(true);
         }
 
         glLineWidth(ViewUtils.dp(1));
-        gridlines.setColor(ThemesRepo.getColor(R.attr.bedGridlinesColor));
+        int gridColor = ThemesRepo.getColor(R.attr.bedGridlinesColor);
+        if (!isActive) {
+            gridColor = ColorUtils.blendARGB(gridColor, 0xFF444444, 0.4f);
+        }
+        gridlines.setColor(gridColor);
         gridlines.render();
 
-        contourlines.setColor(ThemesRepo.getColor(R.attr.bedContourlinesColor));
+        int contourColor = ThemesRepo.getColor(R.attr.bedContourlinesColor);
+        if (!isActive) {
+            contourColor = ColorUtils.blendARGB(contourColor, 0xFF444444, 0.4f);
+        }
+        contourlines.setColor(contourColor);
         contourlines.render();
 
         glDisable(GL_BLEND);

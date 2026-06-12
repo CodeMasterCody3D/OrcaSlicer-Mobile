@@ -125,6 +125,9 @@ public class FileMenu extends ListBedMenu {
                         act.startActivityForResult(i, MainActivity.REQUEST_CODE_OPEN_FILE);
                     }
                 }),
+                new BedMenuItem(R.string.MenuPlates, R.drawable.square_stack_up_outline_28).onClick(v -> {
+                    fragment.showPlatesMenu(v);
+                }),
                 new BedMenuItem(R.string.MenuFileDelete, R.drawable.delete_outline_android_28).setEnabled(hasSelection()).onClick(v -> {
                     if (fragment.getGlView().getRenderer().getModel() == null) return;
 
@@ -270,18 +273,30 @@ public class FileMenu extends ListBedMenu {
 
     @EventHandler(runOnMainThread = true)
     public void onObjectsChanged(ObjectsListChangedEvent e) {
-        ((BedMenuItem) adapter.getItems().get(1)).setEnabled(hasSelection());
-        adapter.notifyItemChanged(1);
-
-        int i = 8 - (BeamServerData.isBoostyAvailable() && CloudController.needShowAIGenerator() ? 0 : 1);
-        ((BedMenuItem) adapter.getItems().get(i)).setEnabled(hasModel());
-        adapter.notifyItemChanged(i);
+        for (int i = 0; i < adapter.getItems().size(); i++) {
+            SimpleRecyclerItem item = adapter.getItems().get(i);
+            if (item instanceof BedMenuItem) {
+                if (((BedMenuItem) item).titleRes == R.string.MenuFileDelete) {
+                    ((BedMenuItem) item).setEnabled(hasSelection());
+                    adapter.notifyItemChanged(i);
+                } else if (((BedMenuItem) item).titleRes == R.string.MenuFileExport3mf) {
+                    ((BedMenuItem) item).setEnabled(hasModel());
+                    adapter.notifyItemChanged(i);
+                }
+            }
+        }
     }
 
     @EventHandler(runOnMainThread = true)
     public void onSelectionChanged(SelectedObjectChangedEvent e) {
-        ((BedMenuItem) adapter.getItems().get(1)).setEnabled(hasSelection());
-        adapter.notifyItemChanged(1);
+        for (int i = 0; i < adapter.getItems().size(); i++) {
+            SimpleRecyclerItem item = adapter.getItems().get(i);
+            if (item instanceof BedMenuItem && ((BedMenuItem) item).titleRes == R.string.MenuFileDelete) {
+                ((BedMenuItem) item).setEnabled(hasSelection());
+                adapter.notifyItemChanged(i);
+                break;
+            }
+        }
     }
 
     @EventHandler(runOnMainThread = true)

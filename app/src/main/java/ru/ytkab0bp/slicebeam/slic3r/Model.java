@@ -111,7 +111,15 @@ public class Model {
         Native.model_flatten_rotate(pointer, i, surface.pointer);
     }
 
+    public long getPointer() {
+        return pointer;
+    }
+
     public int getObjectsCount() {
+        if (pointer == 0) {
+            android.util.Log.e("Model", "CRITICAL ERROR: getObjectsCount called with pointer == 0!", new Exception());
+            return 0;
+        }
         return Native.model_get_objects_count(pointer);
     }
 

@@ -109,15 +109,21 @@ public class BedFragment extends Fragment {
 
     private View contentView;
 
-    private Model model;
+    // Refactored plate management
+    private java.util.ArrayList<Model> platesModels = new java.util.ArrayList<>();
+    private int currentPlateIndex = 0;
+    
     private GCodeProcessorResult gCodeResult;
     private UnfoldMenu currentUnfoldMenu;
 
-    private int totalPlates = 1;
-    private int currentPlate = 1;
+    private int totalPlates = 1; // used for importing
     private File currentProjectFile;
-    private LinearLayout plateSelectorView;
-    private TextView plateSelectorText;
+    private TextView plateIndicatorText;
+
+    public Model getCurrentModel() {
+        if (platesModels.isEmpty()) return null;
+        return platesModels.get(currentPlateIndex);
+    }
 
     private ru.ytkab0bp.slicebeam.view.PaintModeView paintModeView;
 
@@ -385,10 +391,10 @@ public class BedFragment extends Fragment {
         }
 
         if (!(getContext() instanceof Activity && ((Activity) getContext()).isChangingConfigurations())) {
-            if (model != null) {
-                model.release();
-                model = null;
+            for (Model m : platesModels) {
+                if (m != null) m.release();
             }
+            platesModels.clear();
             if (gCodeResult != null) {
                 gCodeResult.release();
                 gCodeResult = null;
@@ -438,8 +444,9 @@ public class BedFragment extends Fragment {
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     public View onCreateView(Context ctx) {
+        if (platesModels.isEmpty()) platesModels.add(new Model());
         glView = new GLView(ctx);
-        glView.getRenderer().setModel(model);
+        glView.getRenderer().setModel(getCurrentModel());
         glView.getRenderer().setGCodeViewer(gCodeResult);
         glView.setOnModelLongPressListener((view, objectIndex, x, y) -> showModelContextMenu(objectIndex));
         glView.setOnBedLongPressListener((view, x, y) -> showBedContextMenu());
@@ -454,52 +461,16 @@ public class BedFragment extends Fragment {
             }
         };
 
-        plateSelectorView = new LinearLayout(ctx);
-        plateSelectorView.setOrientation(LinearLayout.HORIZONTAL);
-        plateSelectorView.setGravity(Gravity.CENTER);
-        android.graphics.drawable.GradientDrawable plateBg = new android.graphics.drawable.GradientDrawable();
-        plateBg.setColor(0x88000000);
-        plateBg.setCornerRadius(ViewUtils.dp(8));
-        plateSelectorView.setBackground(plateBg);
-        plateSelectorView.setVisibility(View.GONE);
-
-        TextView prevPlateBtn = new TextView(ctx);
-        prevPlateBtn.setText("<");
-        prevPlateBtn.setTextSize(24);
-        prevPlateBtn.setTextColor(0xFFFFFFFF);
-        prevPlateBtn.setPadding(ViewUtils.dp(16), ViewUtils.dp(8), ViewUtils.dp(16), ViewUtils.dp(8));
-        prevPlateBtn.setOnClickListener(v -> {
-            if (currentPlate > 1 && currentProjectFile != null) {
-                switchPlate(currentPlate - 1);
-            }
-        });
-
-        plateSelectorText = new TextView(ctx);
-        plateSelectorText.setText("Plate 1/1");
-        plateSelectorText.setTextSize(16);
-        plateSelectorText.setTextColor(0xFFFFFFFF);
-        plateSelectorText.setPadding(ViewUtils.dp(8), ViewUtils.dp(8), ViewUtils.dp(8), ViewUtils.dp(8));
-
-        TextView nextPlateBtn = new TextView(ctx);
-        nextPlateBtn.setText(">");
-        nextPlateBtn.setTextSize(24);
-        nextPlateBtn.setTextColor(0xFFFFFFFF);
-        nextPlateBtn.setPadding(ViewUtils.dp(16), ViewUtils.dp(8), ViewUtils.dp(16), ViewUtils.dp(8));
-        nextPlateBtn.setOnClickListener(v -> {
-            if (currentPlate < totalPlates && currentProjectFile != null) {
-                switchPlate(currentPlate + 1);
-            }
-        });
-
-        plateSelectorView.addView(prevPlateBtn);
-        plateSelectorView.addView(plateSelectorText);
-        plateSelectorView.addView(nextPlateBtn);
-
-        FrameLayout.LayoutParams plateParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        plateParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        plateParams.topMargin = ViewUtils.dp(16);
-        overlayLayout.addView(plateSelectorView, plateParams);
-
+        plateIndicatorText = new TextView(ctx);
+        plateIndicatorText.setTextSize(16);
+        plateIndicatorText.setTextColor(0xAAFFFFFF);
+        plateIndicatorText.setShadowLayer(4, 0, 0, 0xFF000000);
+        plateIndicatorText.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        plateIndicatorText.setText("Plate " + (currentPlateIndex + 1));
+        FrameLayout.LayoutParams indicatorParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        indicatorParams.gravity = Gravity.TOP | Gravity.START;
+        indicatorParams.topMargin = ViewUtils.dp(80);
+        indicatorParams.leftMargin = ViewUtils.dp(16);
         LinearLayout ll = new LinearLayout(ctx);
         DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
         boolean portrait = dm.widthPixels < dm.heightPixels;
@@ -694,6 +665,67 @@ public class BedFragment extends Fragment {
                 leftMargin = ViewUtils.dp(80 * 2);
             }
         }});
+        indicatorParams.gravity = Gravity.TOP | Gravity.START;
+        indicatorParams.topMargin = 0;
+        indicatorParams.leftMargin = 0;
+        overlayLayout.addView(plateIndicatorText, indicatorParams);
+
+        android.view.Choreographer.getInstance().postFrameCallback(new android.view.Choreographer.FrameCallback() {
+            private double[] vpMatrix = new double[16];
+            private double[] inVec = new double[4];
+            private double[] outVec = new double[4];
+
+            @Override
+            public void doFrame(long frameTimeNanos) {
+                if (glView != null && glView.getRenderer() != null && plateIndicatorText != null) {
+                    ru.ytkab0bp.slicebeam.render.GLRenderer r = glView.getRenderer();
+                    ru.ytkab0bp.slicebeam.slic3r.Bed3D bed = r.getBed();
+                    if (bed != null && bed.isValid() && r.getCamera() != null) {
+                        ru.ytkab0bp.slicebeam.utils.Vec3d min = bed.getVolumeMin();
+                        ru.ytkab0bp.slicebeam.utils.Vec3d max = bed.getVolumeMax();
+                        
+                        // Place it above the top left corner, aligned with the left edge
+                        inVec[0] = min.x + 30;
+                        inVec[1] = max.y + 15;
+                        inVec[2] = 0;
+                        inVec[3] = 1.0;
+
+                        double[] view = r.getCamera().getViewModelMatrix();
+                        double[] proj = r.getProjectionMatrix();
+                        ru.ytkab0bp.slicebeam.utils.DoubleMatrix.multiplyMM(vpMatrix, 0, proj, 0, view, 0);
+                        ru.ytkab0bp.slicebeam.utils.DoubleMatrix.multiplyMV(outVec, 0, vpMatrix, 0, inVec, 0);
+
+                        if (outVec[3] != 0 && outVec[2] > 0 && outVec[2] < outVec[3]) {
+                            float ndcX = (float) (outVec[0] / outVec[3]);
+                            float ndcY = (float) (outVec[1] / outVec[3]);
+                            
+                            float screenX = (ndcX + 1.0f) / 2.0f * glView.getWidth();
+                            float screenY = (1.0f - ndcY) / 2.0f * glView.getHeight();
+                            
+                            plateIndicatorText.setTranslationX(screenX - plateIndicatorText.getWidth() / 2f);
+                            plateIndicatorText.setTranslationY(screenY - plateIndicatorText.getHeight() / 2f);
+
+                            ru.ytkab0bp.slicebeam.utils.Vec3d dir = r.getCamera().getDirForward();
+                            double yaw = Math.atan2(dir.x, dir.y);
+                            double pitch = Math.asin(-dir.z);
+
+                            plateIndicatorText.setRotationX((float) Math.toDegrees(Math.PI / 2 - pitch));
+                            plateIndicatorText.setRotation((float) Math.toDegrees(-yaw));
+                            
+                            float scale = Math.max(0.2f, r.getCamera().getZoom() * 0.8f);
+                            plateIndicatorText.setScaleX(scale);
+                            plateIndicatorText.setScaleY(scale);
+                            
+                            plateIndicatorText.setAlpha(1.0f);
+                        } else {
+                            plateIndicatorText.setAlpha(0.0f);
+                        }
+                    }
+                }
+                if (glView != null) android.view.Choreographer.getInstance().postFrameCallback(this);
+            }
+        });
+
         return overlayLayout;
     }
 
@@ -785,46 +817,164 @@ public class BedFragment extends Fragment {
         loadModel(f, false, 1, null);
     }
 
-    private void switchPlate(int newPlate) {
-        if (currentProjectFile == null) return;
-        currentPlate = newPlate;
-        updatePlateSelectorUI();
+    private void addNewPlate() {
+        platesModels.add(new Model());
+        totalPlates = platesModels.size();
+        switchPlate(platesModels.size() - 1);
+    }
+
+    private void removeCurrentPlate() {
+        if (platesModels.size() <= 1) {
+            Toast.makeText(getContext(), "Cannot remove the only plate", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Model m = platesModels.get(currentPlateIndex);
+        platesModels.remove(currentPlateIndex);
+        totalPlates = platesModels.size();
         
-        // Show loading state if needed
-        try {
-            ModelLoadCallback callback = (loadedModel, firstNewObject, addedObjects) -> {
-                // Done
-            };
-            loadModelInternal(currentProjectFile, true, callback);
-        } catch (Slic3rRuntimeError e) {
-            Log.e("BedFragment", "Failed to switch plate", e);
+        // Use false so we don't try to save the deleted model back into the array
+        switchPlate(Math.max(0, currentPlateIndex - 1), false);
+        
+        if (m != null) {
+            glView.queueEvent(() -> m.release());
         }
     }
 
-    private void updatePlateSelectorUI() {
-        if (totalPlates > 1) {
-            plateSelectorView.setVisibility(View.VISIBLE);
-            plateSelectorText.setText("Plate " + currentPlate + " / " + totalPlates);
-        } else {
-            plateSelectorView.setVisibility(View.GONE);
+    public void showPlatesMenu(View anchor) {
+        android.widget.PopupMenu popup = new android.widget.PopupMenu(getContext(), anchor);
+        popup.getMenu().add(0, 1, 0, R.string.MenuAddPlate);
+        
+        android.view.SubMenu switchMenu = popup.getMenu().addSubMenu(0, 2, 0, R.string.MenuSwitchPlate);
+        for (int i = 0; i < platesModels.size(); i++) {
+            switchMenu.add(1, 100 + i, 0, "Plate " + (i + 1));
+        }
+        
+        popup.getMenu().add(0, 3, 0, R.string.MenuRemovePlate);
+
+        popup.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == 1) {
+                addNewPlate();
+                return true;
+            } else if (item.getItemId() == 3) {
+                removeCurrentPlate();
+                return true;
+            } else if (item.getGroupId() == 1) {
+                switchPlate(item.getItemId() - 100);
+                return true;
+            }
+            return false;
+        });
+        popup.show();
+    }
+
+    private void switchPlate(int newPlateIndex) {
+        switchPlate(newPlateIndex, true, null);
+    }
+
+    private void switchPlate(int newPlateIndex, boolean saveCurrent) {
+        switchPlate(newPlateIndex, saveCurrent, null);
+    }
+
+    private void switchPlate(int newPlateIndex, boolean saveCurrent, ModelLoadCallback loadCallback) {
+        if (newPlateIndex < 0 || newPlateIndex >= platesModels.size()) return;
+        
+        // Save current model only if requested
+        if (saveCurrent) {
+            updateModel();
+        }
+        
+        currentPlateIndex = newPlateIndex;
+        updatePlateIndicator();
+        Model nextModel = platesModels.get(currentPlateIndex);
+        
+        // Lazy load from 3MF project if it's null (not yet loaded)
+        if (nextModel == null && currentProjectFile != null) {
+            android.util.Log.d("BedFragment", "Lazy loading plate " + currentPlateIndex + " from " + currentProjectFile);
+            try {
+                ModelLoadCallback internalCallback = (loadedModel, firstNewObject, addedObjects) -> {
+                    android.util.Log.d("BedFragment", "internalCallback fired with loadedModel=" + loadedModel);
+                    if (loadCallback != null) {
+                        loadCallback.onLoaded(loadedModel, firstNewObject, addedObjects);
+                    }
+                };
+                loadModelInternal(currentProjectFile, true, internalCallback);
+                android.util.Log.d("BedFragment", "loadModelInternal returned");
+                return; // loadModelInternal handles setModel and render
+            } catch (Slic3rRuntimeError e) {
+                android.util.Log.e("BedFragment", "Failed to lazy load plate", e);
+                nextModel = new Model();
+                android.util.Log.e("BedFragment", "Created new Model in Slic3rRuntimeError with pointer " + nextModel.getPointer());
+                platesModels.set(currentPlateIndex, nextModel);
+            } catch (Exception e) {
+                android.util.Log.e("BedFragment", "Unexpected exception during lazy load", e);
+                nextModel = new Model();
+                android.util.Log.e("BedFragment", "Created new Model in Exception with pointer " + nextModel.getPointer());
+                platesModels.set(currentPlateIndex, nextModel);
+            }
+        }
+        
+        // If it's already loaded or freshly created fallback
+        if (nextModel == null) {
+            nextModel = new Model();
+            platesModels.set(currentPlateIndex, nextModel);
+        }
+        
+        Model finalNext = nextModel;
+        android.util.Log.e("BedFragment", "Queueing setModel with finalNext pointer: " + (finalNext != null ? finalNext.getPointer() : "null"));
+        glView.queueEvent(() -> {
+            android.util.Log.e("BedFragment", "Executing setModel with finalNext pointer: " + (finalNext != null ? finalNext.getPointer() : "null"));
+            glView.getRenderer().setModel(finalNext);
+            glView.requestRender();
+        });
+    }
+
+    private void updatePlateIndicator() {
+        if (plateIndicatorText != null) {
+            ru.ytkab0bp.slicebeam.utils.ViewUtils.postOnMainThread(() -> {
+                plateIndicatorText.setText("Plate " + (currentPlateIndex + 1));
+            });
         }
     }
 
     public void loadModel(File f, boolean preserveProjectLayout, int plateCount, ModelLoadCallback callback) throws Slic3rRuntimeError {
         this.currentProjectFile = f;
         this.totalPlates = plateCount;
+        
         if (plateCount > 1) {
-            this.currentPlate = 1;
+            // Re-initialize for new 3MF project
+            java.util.List<ru.ytkab0bp.slicebeam.slic3r.Model> oldModels = new java.util.ArrayList<>(platesModels);
+            platesModels.clear();
+            glView.queueEvent(() -> {
+                glView.getRenderer().setModel(null);
+                glView.getRenderer().resetGlModels();
+                for (ru.ytkab0bp.slicebeam.slic3r.Model m : oldModels) {
+                    if (m != null) m.release();
+                }
+            });
+            for (int i = 0; i < plateCount; i++) {
+                platesModels.add(null);
+            }
+            this.currentPlateIndex = 0;
+            switchPlate(0, false, callback);
         } else {
-            this.currentPlate = 0; // Means load all (for 1 plate project or STLs)
+            // Loading an STL or 1-plate 3MF. Just load into current plate.
+            if (platesModels.isEmpty()) {
+                platesModels.add(new Model());
+                currentPlateIndex = 0;
+            }
+            if (platesModels.get(currentPlateIndex) == null) {
+                platesModels.set(currentPlateIndex, new Model());
+            }
+            loadModelInternal(f, preserveProjectLayout, callback);
         }
-        updatePlateSelectorUI();
-        loadModelInternal(f, preserveProjectLayout, callback);
+        updatePlateIndicator();
     }
 
     private void loadModelInternal(File f, boolean preserveProjectLayout, ModelLoadCallback callback) throws Slic3rRuntimeError {
-        Model m = new Model(f, currentPlate);
-        if (model != null) {
+        // Wait, if it's a 3mf project, it already passed plate count, so currentPlateIndex is correct.
+        Model m = new Model(f, currentPlateIndex + 1); // 1-based in JNI for specific plate, or 0 for default
+        Model currentModel = getCurrentModel();
+        if (currentModel != null && currentModel.getObjectsCount() > 0) {
             glView.queueEvent(new Runnable() {
                 @Override
                 public void run() {
@@ -833,7 +983,7 @@ public class BedFragment extends Fragment {
                         ViewUtils.postOnMainThread(()-> glView.queueEvent(this));
                         return;
                     }
-                    int firstNewObject = model.getObjectsCount();
+                    int firstNewObject = currentModel.getObjectsCount();
                     int addedObjects = m.getObjectsCount();
                     if (!preserveProjectLayout) {
                         Vec3d objMin = new Vec3d(), objMax = new Vec3d();
@@ -847,16 +997,16 @@ public class BedFragment extends Fragment {
                     }
 
                     for (int i = 0; i < addedObjects; i++) {
-                        model.addObject(m, i);
+                        currentModel.addObject(m, i);
                     }
                     m.release();
-                    model.resetBoundingBox();
+                    currentModel.resetBoundingBox();
                     if (!preserveProjectLayout) {
-                        bed.arrange(model);
+                        bed.arrange(currentModel);
                     }
                     glView.getRenderer().resetGlModels();
                     if (callback != null) {
-                        callback.onLoaded(model, firstNewObject, addedObjects);
+                        callback.onLoaded(currentModel, firstNewObject, addedObjects);
                     }
                 }
             });
@@ -869,7 +1019,9 @@ public class BedFragment extends Fragment {
                         ViewUtils.postOnMainThread(()-> glView.queueEvent(this));
                         return;
                     }
-                    glView.getRenderer().setModel(model = m);
+                    if (currentModel != null) currentModel.release();
+                    platesModels.set(currentPlateIndex, m);
+                    glView.getRenderer().setModel(m);
                     int addedObjects = m.getObjectsCount();
 
                     if (!preserveProjectLayout) {
@@ -879,12 +1031,15 @@ public class BedFragment extends Fragment {
                         for (int i = 0; i < addedObjects; i++) {
                             m.getTranslation(i, objTranslate);
                             m.getBoundingBoxExact(i, objMin, objMax);
-
-                            m.translate(i, -objTranslate.x + center.x, -objTranslate.y + center.y, -objTranslate.z + (objMax.z - objMin.z) / 2);
+                            // Move to center, fix Z
+                            m.translate(i, center.x - (objMax.x + objMin.x) / 2, center.y - (objMax.y + objMin.y) / 2, -objTranslate.z + (objMax.z - objMin.z) / 2);
                         }
+                        bed.arrange(m);
                     }
+
+                    glView.getRenderer().resetGlModels();
                     if (callback != null) {
-                        callback.onLoaded(model, 0, addedObjects);
+                        callback.onLoaded(m, 0, addedObjects);
                     }
                 }
             });
@@ -920,7 +1075,9 @@ public class BedFragment extends Fragment {
     }
 
     public void updateModel() {
-        model = glView.getRenderer().getModel();
+        if (platesModels.isEmpty()) return;
+        Model currentModel = glView.getRenderer().getModel();
+        platesModels.set(currentPlateIndex, currentModel);
     }
 
     public enum MenuCategory {
