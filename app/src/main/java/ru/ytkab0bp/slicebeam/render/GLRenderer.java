@@ -274,8 +274,20 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         return "1".equals(v) || "true".equals(v) || "yes".equals(v) || "on".equals(v);
     }
 
+    private boolean isModelMultiColor() {
+        if (model == null || model.getPointer() == 0 || model.getObjectsCount() == 0) return false;
+        boolean hasPaint = false;
+        java.util.Set<Integer> activeExtruders = new java.util.HashSet<>();
+        for (int i = 0; i < model.getObjectsCount(); i++) {
+            if (model.hasPaint(i)) hasPaint = true;
+            activeExtruders.add(model.getExtruder(i));
+        }
+        return hasPaint || activeExtruders.size() > 1;
+    }
+
     private boolean isPrimeTowerEnabled(ru.ytkab0bp.slicebeam.config.ConfigObject cfg) {
         if (cfg == null) return false;
+        if (!isModelMultiColor()) return false;
         if (cfg.has("enable_prime_tower")) return boolConfig(cfg, "enable_prime_tower", false);
         return boolConfig(cfg, "wipe_tower", false);
     }
