@@ -124,6 +124,7 @@ public class BedFragment extends Fragment {
 
     private ru.ytkab0bp.slicebeam.view.PaintModeView paintModeView;
     private ru.ytkab0bp.slicebeam.view.MeasureModeView measureModeView;
+    private ru.ytkab0bp.slicebeam.view.VariableLayerHeightModeView variableLayerHeightModeView;
 
     private BedSwipeDownLayout swipeDownLayout;
     private boolean hasWebError;
@@ -359,6 +360,24 @@ public class BedFragment extends Fragment {
         return measureModeView != null;
     }
 
+    public void enterVariableLayerHeightMode() {
+        Context ctx = getContext();
+        if (ctx == null || glView == null || variableLayerHeightModeView != null) return;
+        variableLayerHeightModeView = new ru.ytkab0bp.slicebeam.view.VariableLayerHeightModeView(ctx, glView, this::exitVariableLayerHeightMode);
+        overlayLayout.addView(variableLayerHeightModeView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void exitVariableLayerHeightMode() {
+        if (variableLayerHeightModeView != null) {
+            overlayLayout.removeView(variableLayerHeightModeView);
+            variableLayerHeightModeView = null;
+        }
+    }
+
+    public boolean isVariableLayerHeightMode() {
+        return variableLayerHeightModeView != null;
+    }
+
     public void loadGCode(File f) {
         gCodeResult = new GCodeProcessorResult(f);
         ViewUtils.postOnMainThread(()-> {
@@ -382,6 +401,10 @@ public class BedFragment extends Fragment {
 
     @Override
     public boolean onBackPressed() {
+        if (variableLayerHeightModeView != null) {
+            exitVariableLayerHeightMode();
+            return true;
+        }
         if (measureModeView != null) {
             glView.queueEvent(() -> {
                 glView.getRenderer().setInMeasureMode(false);

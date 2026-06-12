@@ -197,6 +197,18 @@ public class Model {
         Native.model_set_extruder(pointer, i, extruder);
     }
 
+    public void applyAdaptiveLayerHeight(int i, String configPath, float qualityFactor) {
+        Native.model_apply_adaptive_layer_height(pointer, i, configPath, qualityFactor);
+    }
+
+    public void clearAdaptiveLayerHeight(int i) {
+        Native.model_clear_adaptive_layer_height(pointer, i);
+    }
+
+    public boolean hasAdaptiveLayerHeight(int i) {
+        return Native.model_has_adaptive_layer_height(pointer, i);
+    }
+
     /** True if object i has any committed multi-color painting. */
     public boolean hasPaint(int i) {
         return Native.model_has_paint(pointer, i);

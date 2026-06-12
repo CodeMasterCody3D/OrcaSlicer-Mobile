@@ -86,7 +86,8 @@ public class TransformMenu extends ListBedMenu {
         // --- Not yet implemented (each is its own feature; show a clear message for now) ---
         items.add(selection(new BedMenuItem(R.string.MenuToolbarSplit, R.drawable.menu_transform_cut_or_mirror_28)
                 .onClick(v -> fragment.splitSelectedObject())));
-        items.add(notImplemented(R.string.MenuToolbarVariableLayerHeight, R.drawable.sliders_outline_28));
+        items.add(selection(new BedMenuItem(R.string.MenuToolbarVariableLayerHeight, R.drawable.sliders_outline_28)
+                .onClick(v -> fragment.enterVariableLayerHeightMode())));
         items.add(selection(new BedMenuItem(R.string.MenuToolbarMove, R.drawable.menu_orientation_position_28)
                 .onClick(v -> fragment.showUnfoldMenu(new OrientationMenu().new PositionMenu(), v))));
         items.add(selection(new BedMenuItem(R.string.MenuToolbarRotate, R.drawable.menu_orientation_rotation_28)

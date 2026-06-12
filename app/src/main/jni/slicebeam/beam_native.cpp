@@ -9,6 +9,7 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/ModelArrange.hpp"
 #include <libslic3r/SVG.hpp>
@@ -1004,6 +1005,41 @@ extern "C" {
         ModelRef* model = (ModelRef*) (intptr_t) ptr;
         ModelObject* obj = model->model.objects[i];
         obj->config.set("extruder", extruder);
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1apply_1adaptive_1layer_1height(JNIEnv* env, jclass, jlong ptr, jint i, jstring configPath, jfloat qualityFactor) {
+        try {
+            ModelRef* model = (ModelRef*) (intptr_t) ptr;
+            if (i < 0 || i >= (int) model->model.objects.size()) return;
+            ModelObject* obj = model->model.objects[i];
+
+            DynamicPrintConfig config;
+            const char *chars = env->GetStringUTFChars(configPath, JNI_FALSE);
+            config.load(std::string(chars), ForwardCompatibilitySubstitutionRule::Disable);
+            env->ReleaseStringUTFChars(configPath, chars);
+            config.normalize_fdm();
+
+            SlicingParameters slicing_params = PrintObject::slicing_parameters(config, *obj, 0.0f, Vec3d::Zero());
+            std::vector<double> profile = layer_height_profile_adaptive(slicing_params, *obj, qualityFactor);
+            obj->layer_height_profile.set(profile);
+        } catch (const std::exception& e) {
+            env->ThrowNew(env->FindClass("java/lang/RuntimeException"), e.what());
+        }
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1clear_1adaptive_1layer_1height(JNIEnv* env, jclass, jlong ptr, jint i) {
+        ModelRef* model = (ModelRef*) (intptr_t) ptr;
+        if (i >= 0 && i < (int) model->model.objects.size()) {
+            model->model.objects[i]->layer_height_profile.clear();
+        }
+    }
+
+    JNIEXPORT jboolean JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1has_1adaptive_1layer_1height(JNIEnv* env, jclass, jlong ptr, jint i) {
+        ModelRef* model = (ModelRef*) (intptr_t) ptr;
+        if (i >= 0 && i < (int) model->model.objects.size()) {
+            return !model->model.objects[i]->layer_height_profile.empty();
+        }
+        return false;
     }
 
     JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1slice(JNIEnv* env, jclass, jlong ptr, jstring configPath, jstring path, jobject listener, jint numFilaments, jintArray colorsArr, jint calibMode, jdouble calibStart, jdouble calibEnd, jdouble calibStep) {

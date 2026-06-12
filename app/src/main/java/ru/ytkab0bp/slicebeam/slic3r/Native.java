@@ -215,6 +215,9 @@ public class Native {
     static native boolean model_is_big_object(long ptr, int i);
     static native int model_get_extruder(long ptr, int i);
     static native void model_set_extruder(long ptr, int i, int extruder);
+    static native void model_apply_adaptive_layer_height(long ptr, int i, String configPath, float qualityFactor);
+    static native void model_clear_adaptive_layer_height(long ptr, int i);
+    static native boolean model_has_adaptive_layer_height(long ptr, int i);
     // ---- Multi-color painting (mmu segmentation) ----
     static native long paint_begin(long modelPtr, int objIdx, int mode);
     static native double[] paint_raycast(long sessionPtr, double[] origin, double[] dir);
