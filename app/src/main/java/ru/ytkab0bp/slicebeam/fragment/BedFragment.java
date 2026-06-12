@@ -123,6 +123,7 @@ public class BedFragment extends Fragment {
     }
 
     private ru.ytkab0bp.slicebeam.view.PaintModeView paintModeView;
+    private ru.ytkab0bp.slicebeam.view.MeasureModeView measureModeView;
 
     private BedSwipeDownLayout swipeDownLayout;
     private boolean hasWebError;
@@ -336,6 +337,28 @@ public class BedFragment extends Fragment {
         return paintModeView != null;
     }
 
+    public void enterMeasureMode() {
+        Context ctx = getContext();
+        if (ctx == null || glView == null || measureModeView != null) return;
+        glView.queueEvent(() -> {
+            glView.getRenderer().setInMeasureMode(true);
+            glView.requestRender();
+        });
+        measureModeView = new ru.ytkab0bp.slicebeam.view.MeasureModeView(ctx, glView, this::exitMeasureMode);
+        overlayLayout.addView(measureModeView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void exitMeasureMode() {
+        if (measureModeView != null) {
+            overlayLayout.removeView(measureModeView);
+            measureModeView = null;
+        }
+    }
+
+    public boolean isMeasureMode() {
+        return measureModeView != null;
+    }
+
     public void loadGCode(File f) {
         gCodeResult = new GCodeProcessorResult(f);
         ViewUtils.postOnMainThread(()-> {
@@ -359,6 +382,15 @@ public class BedFragment extends Fragment {
 
     @Override
     public boolean onBackPressed() {
+        if (measureModeView != null) {
+            glView.queueEvent(() -> {
+                glView.getRenderer().setInMeasureMode(false);
+                glView.getRenderer().clearMeasurePoints();
+                glView.requestRender();
+            });
+            exitMeasureMode();
+            return true;
+        }
         if (paintModeView != null) {
             glView.queueEvent(() -> {
                 glView.getRenderer().endPaint(true);

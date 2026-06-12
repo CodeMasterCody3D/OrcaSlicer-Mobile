@@ -115,7 +115,9 @@ public class TransformMenu extends ListBedMenu {
 
         // --- Misc ---
         items.add(notImplemented(R.string.MenuToolbarEmboss, R.drawable.edit_outline_28));
-        items.add(notImplemented(R.string.MenuToolbarMeasure, R.drawable.wrench_outline_28));
+        items.add(new BedMenuItem(R.string.MenuToolbarMeasure, R.drawable.wrench_outline_28).onClick(v -> {
+            fragment.enterMeasureMode();
+        }));
 
         boolean sel = hasSelection();
         for (BedMenuItem it : selectionItems) it.setEnabled(sel);

@@ -103,6 +103,10 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     private Vec3d bbMin = new Vec3d(), bbMax = new Vec3d();
     private boolean isInFlattenMode;
     private ArrayList<GLModel> flattenPlanes = new ArrayList<>();
+    private boolean isInMeasureMode = false;
+    private Vec3d measurePointA = null;
+    private Vec3d measurePointB = null;
+    private GLModel measurePointModel = null;
 
     private boolean cutPlaneVisible = false;
     private float cutPlaneZ, cutPlaneRotX, cutPlaneRotY;
@@ -399,6 +403,22 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         this.gcodeResult = result;
     }
 
+    public synchronized void setInMeasureMode(boolean enabled) {
+        this.isInMeasureMode = enabled;
+        if (!enabled) {
+            clearMeasurePoints();
+        }
+    }
+
+    public synchronized boolean isInMeasureMode() {
+        return isInMeasureMode;
+    }
+
+    public synchronized void clearMeasurePoints() {
+        measurePointA = null;
+        measurePointB = null;
+    }
+
     public GLRenderer(GLView glView) {
         this.glView = glView;
     }
@@ -615,6 +635,7 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         }
 
         drawPrimeTowerPreview(viewMatrix);
+        drawMeasurePoints();
 
         if (isViewerEnabled) {
             if (viewer == null) {
@@ -1130,6 +1151,74 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         shader.stopUsing();
     }
 
+    private void drawMeasurePoints() {
+        if (!isInMeasureMode) return;
+        if (measurePointModel == null) {
+            measurePointModel = new GLModel();
+            measurePointModel.initBox(3.0f, 3.0f, 3.0f);
+        }
+
+        double[] viewMatrix = camera.getViewModelMatrix();
+        GLShaderProgram shader = shadersManager.get(GLShadersManager.SHADER_GOURAUD_LIGHT);
+        shader.startUsing();
+        shader.setUniform("emission_factor", 0.6f);
+        shader.setUniformMatrix4fv("projection_matrix", projectionMatrix);
+        shader.setUniform("volume_mirrored", false);
+
+        boolean blend = glIsEnabled(GL_BLEND);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        if (measurePointA != null) {
+            DoubleMatrix.setIdentityM(modelMatrix, 0);
+            DoubleMatrix.translateM(modelMatrix, 0, measurePointA.x - 1.5, measurePointA.y - 1.5, measurePointA.z - 1.5);
+            DoubleMatrix.multiplyMM(outModelMatrix, 0, viewMatrix, 0, modelMatrix, 0);
+            shader.setUniformMatrix4fv("view_model_matrix", outModelMatrix);
+            Slic3rUtils.calcViewNormalMatrix(viewMatrix, modelMatrix, normalMatrix);
+            shader.setUniformMatrix3fv("view_normal_matrix", normalMatrix);
+            measurePointModel.setColor(Color.RED);
+            measurePointModel.render();
+        }
+
+        if (measurePointB != null) {
+            DoubleMatrix.setIdentityM(modelMatrix, 0);
+            DoubleMatrix.translateM(modelMatrix, 0, measurePointB.x - 1.5, measurePointB.y - 1.5, measurePointB.z - 1.5);
+            DoubleMatrix.multiplyMM(outModelMatrix, 0, viewMatrix, 0, modelMatrix, 0);
+            shader.setUniformMatrix4fv("view_model_matrix", outModelMatrix);
+            Slic3rUtils.calcViewNormalMatrix(viewMatrix, modelMatrix, normalMatrix);
+            shader.setUniformMatrix3fv("view_normal_matrix", normalMatrix);
+            measurePointModel.setColor(Color.GREEN);
+            measurePointModel.render();
+        }
+
+        if (!blend) glDisable(GL_BLEND);
+        shader.stopUsing();
+
+        if (measurePointA != null && measurePointB != null) {
+            float[] lineVertices = {
+                (float) measurePointA.x, (float) measurePointA.y, (float) measurePointA.z,
+                (float) measurePointB.x, (float) measurePointB.y, (float) measurePointB.z
+            };
+            java.nio.FloatBuffer buffer = java.nio.ByteBuffer.allocateDirect(lineVertices.length * 4)
+                .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
+            buffer.put(lineVertices).position(0);
+
+            GLShaderProgram flat = shadersManager.get(GLShadersManager.SHADER_FLAT);
+            flat.startUsing();
+            flat.setUniformMatrix4fv("view_model_matrix", camera.getViewModelMatrix());
+            flat.setUniformMatrix4fv("projection_matrix", projectionMatrix);
+            flat.setUniform4f("uniform_color", 0.0f, 0.8f, 1.0f, 1.0f);
+            glLineWidth(ViewUtils.dp(4.0f));
+
+            int posLoc = flat.getAttribLocation("position");
+            glEnableVertexAttribArray(posLoc);
+            glVertexAttribPointer(posLoc, 3, GL_FLOAT, false, 0, buffer);
+            glDrawArrays(GL_LINES, 0, 2);
+            glDisableVertexAttribArray(posLoc);
+            flat.stopUsing();
+        }
+    }
+
     public boolean deleteObject(int i) {
         if (model == null) return false;
         assertTrue(i >= 0 && i < model.getObjectsCount());
@@ -1475,6 +1564,31 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
     public boolean onClick(float x, float y) {
         if (model == null || isViewerEnabled) return false;
+
+        if (isInMeasureMode) {
+            int targetObj = selectedObject;
+            if (targetObj == -1) {
+                targetObj = raycastObjectIndex(x, y);
+            }
+            if (targetObj != -1 && targetObj < glModels.size()) {
+                GLModel glModel = glModels.get(targetObj);
+                glModel.getRaycaster().raycast(this, raycastHits, x, y);
+                if (!raycastHits.isEmpty()) {
+                    Vec3d hitPoint = raycastHits.get(0).position;
+                    if (measurePointA == null) {
+                        measurePointA = hitPoint;
+                    } else if (measurePointB == null) {
+                        measurePointB = hitPoint;
+                    } else {
+                        measurePointA = hitPoint;
+                        measurePointB = null;
+                    }
+                    SliceBeam.EVENT_BUS.fireEvent(new ru.ytkab0bp.slicebeam.events.MeasurePointsChangedEvent(measurePointA, measurePointB));
+                    return true;
+                }
+            }
+            return false;
+        }
 
         if (tryAddCutConnector(x, y)) return true;
 
@@ -1838,6 +1952,10 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         if (viewer != null) {
             viewer.release();
             viewer = null;
+        }
+        if (measurePointModel != null) {
+            measurePointModel.release();
+            measurePointModel = null;
         }
         for (int i = 0; i < glModels.size(); i++) {
             glModels.get(i).release();
