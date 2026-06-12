@@ -125,6 +125,8 @@
     <string name="MenuToolbar">Toolbar</string>
     <string name="MenuToolbarNotImplemented">%1$s isn\'t available yet.</string>
     <string name="MenuToolbarSplit">Split</string>
+    <string name="MenuToolbarSplitDone">Split into %1$d objects.</string>
+    <string name="MenuToolbarSplitNothing">Nothing to split: this object is a single connected part.</string>
     <string name="MenuToolbarVariableLayerHeight">Layer\nheight</string>
     <string name="MenuToolbarMove">Move</string>
     <string name="MenuToolbarRotate">Rotate</string>

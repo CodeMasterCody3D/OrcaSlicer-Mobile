@@ -95,6 +95,17 @@ public class GCodeViewer {
     public static final int VIEW_TYPE_FEATURE = 0;
     public static final int VIEW_TYPE_TOOL = 11; // color by filament/tool
 
+    // Option types (see libvgcode EOptionType)
+    public static final int OPTION_TYPE_SEAMS = 4;
+
+    public boolean isOptionVisible(int optionType) {
+        return Native.vgcode_is_option_visible(pointer, optionType);
+    }
+
+    public void toggleOptionVisibility(int optionType) {
+        Native.vgcode_toggle_option_visibility(pointer, optionType);
+    }
+
     public void setViewType(int type) {
         Native.vgcode_set_view_type(pointer, type);
     }

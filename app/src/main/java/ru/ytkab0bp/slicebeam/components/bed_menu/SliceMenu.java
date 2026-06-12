@@ -325,6 +325,41 @@ public class SliceMenu extends ListBedMenu {
             ll.addView(schemeRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             ll.addView(new DividerView(ctx), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(1f)));
 
+            LinearLayout seamRow = new LinearLayout(ctx);
+            seamRow.setOrientation(LinearLayout.HORIZONTAL);
+            seamRow.setGravity(Gravity.CENTER_VERTICAL);
+            seamRow.setPadding(ViewUtils.dp(16), ViewUtils.dp(12), ViewUtils.dp(16), ViewUtils.dp(12));
+            seamRow.setBackground(ViewUtils.createRipple(ThemesRepo.getColor(android.R.attr.colorControlHighlight), 0));
+
+            TextView seamLabel = new TextView(ctx);
+            seamLabel.setText("Show seams");
+            seamLabel.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+            seamLabel.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+            seamRow.addView(seamLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            MaterialCheckBox seamCheckBox = new MaterialCheckBox(ctx);
+            seamCheckBox.setChecked(viewer != null && viewer.isOptionVisible(GCodeViewer.OPTION_TYPE_SEAMS));
+            seamRow.addView(seamCheckBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            seamRow.setOnClickListener(v -> {
+                GCodeViewer vViewer = getViewer();
+                if (vViewer != null) {
+                    vViewer.toggleOptionVisibility(GCodeViewer.OPTION_TYPE_SEAMS);
+                    seamCheckBox.setChecked(!seamCheckBox.isChecked());
+                    fragment.getGlView().requestRender();
+                }
+            });
+            seamCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                GCodeViewer vViewer = getViewer();
+                if (vViewer != null && vViewer.isOptionVisible(GCodeViewer.OPTION_TYPE_SEAMS) != isChecked) {
+                    vViewer.toggleOptionVisibility(GCodeViewer.OPTION_TYPE_SEAMS);
+                    fragment.getGlView().requestRender();
+                }
+            });
+
+            ll.addView(seamRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            ll.addView(new DividerView(ctx), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(1f)));
+
             ll.addView(new Space(ctx), new LinearLayout.LayoutParams(0, 0, 1f));
 
             for (int i = 0; i < GCodeViewer.EXTRUSION_ROLES_COUNT; i++) {
@@ -410,7 +445,7 @@ public class SliceMenu extends ListBedMenu {
                             visibleCount++;
                         }
                     }
-                    return ViewUtils.dp(42) * visibleCount + ViewUtils.dp(28) + ViewUtils.dp(52) + ViewUtils.dp(18 + 8) + ViewUtils.dp(44);
+                    return ViewUtils.dp(42) * visibleCount + ViewUtils.dp(28) + ViewUtils.dp(52) + ViewUtils.dp(18 + 8) + ViewUtils.dp(44) + ViewUtils.dp(46);
                 }
             }
             return super.getRequestedSize(into, portrait);

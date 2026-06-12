@@ -84,7 +84,8 @@ public class TransformMenu extends ListBedMenu {
         }).setEnabled(fragment.getGlView().getRenderer().getModel() != null));
 
         // --- Not yet implemented (each is its own feature; show a clear message for now) ---
-        items.add(notImplemented(R.string.MenuToolbarSplit, R.drawable.menu_transform_cut_or_mirror_28));
+        items.add(selection(new BedMenuItem(R.string.MenuToolbarSplit, R.drawable.menu_transform_cut_or_mirror_28)
+                .onClick(v -> fragment.splitSelectedObject())));
         items.add(notImplemented(R.string.MenuToolbarVariableLayerHeight, R.drawable.sliders_outline_28));
         items.add(selection(new BedMenuItem(R.string.MenuToolbarMove, R.drawable.menu_orientation_position_28)
                 .onClick(v -> fragment.showUnfoldMenu(new OrientationMenu().new PositionMenu(), v))));
@@ -106,14 +107,11 @@ public class TransformMenu extends ListBedMenu {
         items.add(selection(new BedMenuItem(R.string.MenuTransformCut, R.drawable.menu_transform_cut_or_mirror_28)
                 .onClick(v -> fragment.showUnfoldMenu(new CutMenu(), v))));
 
-        // --- Painting tools ---
-        items.add(notImplemented(R.string.MenuToolbarSupportPaint, R.drawable.paint_roller_outline_28));
-        items.add(notImplemented(R.string.MenuToolbarSeamPaint, R.drawable.paint_roller_outline_28));
-        items.add(notImplemented(R.string.MenuToolbarFuzzyPaint, R.drawable.paint_roller_outline_28));
-        items.add(selection(new BedMenuItem(R.string.MenuToolbarColorPaint, R.drawable.paint_roller_outline_28).onClick(v -> {
-            int objectIndex = fragment.getGlView().getRenderer().getSelectedObject();
-            if (objectIndex != -1) fragment.enterPaintMode(objectIndex);
-        })));
+        // --- Painting tools (color, support, seam, fuzzy skin all share the paint UI) ---
+        items.add(paintButton(R.string.MenuToolbarSupportPaint, ru.ytkab0bp.slicebeam.render.GLRenderer.PAINT_MODE_SUPPORT));
+        items.add(paintButton(R.string.MenuToolbarSeamPaint, ru.ytkab0bp.slicebeam.render.GLRenderer.PAINT_MODE_SEAM));
+        items.add(paintButton(R.string.MenuToolbarFuzzyPaint, ru.ytkab0bp.slicebeam.render.GLRenderer.PAINT_MODE_FUZZY));
+        items.add(paintButton(R.string.MenuToolbarColorPaint, ru.ytkab0bp.slicebeam.render.GLRenderer.PAINT_MODE_COLOR));
 
         // --- Misc ---
         items.add(notImplemented(R.string.MenuToolbarEmboss, R.drawable.edit_outline_28));
@@ -127,6 +125,13 @@ public class TransformMenu extends ListBedMenu {
     private BedMenuItem selection(BedMenuItem item) {
         selectionItems.add(item);
         return item;
+    }
+
+    private BedMenuItem paintButton(int titleRes, int mode) {
+        return selection(new BedMenuItem(titleRes, R.drawable.paint_roller_outline_28).onClick(v -> {
+            int objectIndex = fragment.getGlView().getRenderer().getSelectedObject();
+            if (objectIndex != -1) fragment.enterPaintMode(objectIndex, mode);
+        }));
     }
 
     private BedMenuItem notImplemented(int titleRes, int iconRes) {

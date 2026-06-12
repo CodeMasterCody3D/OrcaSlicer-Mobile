@@ -152,6 +152,10 @@ static double calc_max_layer_height(const PrintConfig &config, double max_object
 static FilamentChangeStats calc_filament_change_info_by_toolorder(const PrintConfig* config, const std::vector<int>& filament_map, const std::vector<FlushMatrix>& flush_matrix, const std::vector<std::vector<unsigned int>>& layer_sequences)
 {
     FilamentChangeStats ret;
+    // Guard against inconsistent configs (e.g. imported project settings whose per-filament
+    // vectors disagree in length): never index filament_map / flush_matrix out of bounds.
+    if (filament_map.empty() || flush_matrix.empty())
+        return ret;
     std::unordered_map<int, int> flush_volume_per_filament;
     int max_extruder_id = *std::max_element(filament_map.begin(), filament_map.end());
     assert(max_extruder_id >= 0);
@@ -161,14 +165,19 @@ static FilamentChangeStats calc_filament_change_info_by_toolorder(const PrintCon
     float total_filament_flush_weight = 0;
     for (const auto& ls : layer_sequences) {
         for (const auto& item : ls) {
-            int extruder_id = filament_map[item];
-            int last_filament = last_filament_per_extruder[extruder_id];
+            int extruder_id = item < filament_map.size() ? filament_map[item] : 0;
+            if (extruder_id < 0) extruder_id = 0;
+            int last_filament = extruder_id <= max_extruder_id ? (int) last_filament_per_extruder[extruder_id] : -1;
             if (last_filament != -1 && last_filament != item) {
-                int flush_volume = flush_matrix[extruder_id][last_filament][item];
-                flush_volume_per_filament[item] += flush_volume;
-                total_filament_change_count += 1;
+                const FlushMatrix& mx = flush_matrix[(size_t) extruder_id < flush_matrix.size() ? extruder_id : 0];
+                if ((size_t) last_filament < mx.size() && (size_t) item < mx[last_filament].size()) {
+                    int flush_volume = mx[last_filament][item];
+                    flush_volume_per_filament[item] += flush_volume;
+                    total_filament_change_count += 1;
+                }
             }
-            last_filament_per_extruder[extruder_id] = item;
+            if (extruder_id <= max_extruder_id)
+                last_filament_per_extruder[extruder_id] = item;
         }
     }
 
@@ -1118,6 +1127,10 @@ std::vector<int> ToolOrdering::get_recommended_filament_maps(const std::vector<s
     size_t extruder_nums = print_config.nozzle_diameter.values.size();
     for (size_t nozzle_id = 0; nozzle_id < extruder_nums; ++nozzle_id) {
         std::vector<float>              flush_matrix(cast<float>(get_flush_volumes_matrix(print_config.flush_volumes_matrix.values, nozzle_id, extruder_nums)));
+        // Undersized matrices (inconsistent imported configs) would be sliced past their end; pad
+        // with a sane default purge volume instead of reading out of bounds.
+        if (flush_matrix.size() < (size_t) filament_nums * filament_nums)
+            flush_matrix.resize((size_t) filament_nums * filament_nums, 280.f);
         std::vector<std::vector<float>> wipe_volumes;
         for (unsigned int i = 0; i < filament_nums; ++i)
             wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * filament_nums, flush_matrix.begin() + (i + 1) * filament_nums));
@@ -1243,6 +1256,8 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
         return;
 
     const unsigned int number_of_extruders = (unsigned int)(print_config->filament_colour.values.size() + EPSILON);
+    if (number_of_extruders == 0)
+        return;
 
     using FlushMatrix = std::vector<std::vector<float>>;
     size_t             nozzle_nums = print_config->nozzle_diameter.values.size();
@@ -1252,7 +1267,10 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
     for (size_t nozzle_id = 0; nozzle_id < nozzle_nums; ++nozzle_id) {
         std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(print_config->flush_volumes_matrix.values, nozzle_id, nozzle_nums)));
         std::vector<std::vector<float>> wipe_volumes;
-        if ((print_config->purge_in_prime_tower && print_config->single_extruder_multi_material) || wipe_tower_type == WipeTowerType::Type1) {
+        // The per-nozzle matrix must hold number_of_extruders^2 entries; an undersized one (from an
+        // inconsistent imported config) would be sliced past its end below. Fall back to prime_volume.
+        if (((print_config->purge_in_prime_tower && print_config->single_extruder_multi_material) || wipe_tower_type == WipeTowerType::Type1)
+                && flush_matrix.size() >= (size_t) number_of_extruders * number_of_extruders) {
             for (unsigned int i = 0; i < number_of_extruders; ++i)
                 wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * number_of_extruders, flush_matrix.begin() + (i + 1) * number_of_extruders));
         } else {
@@ -1282,11 +1300,22 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
 
     std::vector<unsigned int> used_filaments = collect_sorted_used_filaments(layer_filaments);
 
+    // A layer referencing a filament the config doesn't declare (id >= number_of_extruders) means
+    // the config is inconsistent with the model's painting; reordering is only an optimization, so
+    // skip it instead of indexing the flush matrices out of bounds.
+    for (unsigned int f : used_filaments)
+        if (f >= number_of_extruders)
+            return;
+
     std::vector<std::set<int>>geometric_unprintables = m_print->get_geometric_unprintable_filaments();
     std::vector<std::set<int>>physical_unprintables = m_print->get_physical_unprintable_filaments(used_filaments);
 
     filament_maps = m_print->get_filament_maps();
     map_mode = m_print->get_filament_map_mode();
+    // Per-filament map entries may be missing in imported configs; pad with extruder 1 (1-based)
+    // so the 0-based transforms below and downstream indexing by filament id stay in bounds.
+    if (filament_maps.size() < (size_t) number_of_extruders)
+        filament_maps.resize(number_of_extruders, 1);
     // only check and map in sequence mode, in by object mode, we check the map in print.cpp
     if (print_config->print_sequence != PrintSequence::ByObject || m_print->objects().size() == 1) {
         if (map_mode < FilamentMapMode::fmmManual) {

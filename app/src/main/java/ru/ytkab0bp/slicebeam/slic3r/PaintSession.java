@@ -7,8 +7,8 @@ package ru.ytkab0bp.slicebeam.slic3r;
 public class PaintSession {
     private long ptr;
 
-    public PaintSession(Model model, int objIdx) {
-        ptr = Native.paint_begin(model.pointer, objIdx);
+    public PaintSession(Model model, int objIdx, int mode) {
+        ptr = Native.paint_begin(model.pointer, objIdx, mode);
     }
 
     public boolean isValid() {

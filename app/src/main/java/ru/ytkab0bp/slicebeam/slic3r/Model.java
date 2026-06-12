@@ -131,6 +131,11 @@ public class Model {
         Native.model_delete_object(pointer, i);
     }
 
+    /** Split object i into separate objects; returns the piece count, or 0 if nothing to split. */
+    public int split(int i) {
+        return Native.model_split(pointer, i);
+    }
+
     public boolean cut(int objectIndex, double zHeight, double rotX, double rotY, boolean keepUpper, boolean keepLower) {
         return Native.model_cut(pointer, objectIndex, zHeight, rotX, rotY, keepUpper, keepLower);
     }

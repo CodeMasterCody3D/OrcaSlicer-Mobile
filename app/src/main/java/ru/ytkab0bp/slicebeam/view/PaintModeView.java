@@ -35,6 +35,7 @@ public class PaintModeView extends FrameLayout {
     private final GLView glView;
     private final Runnable onExit;
     private final List<FilamentSlot> slots;
+    private final int mode;
 
     private LinearLayout swatchRow;
     private int selectedFilament = 2; // 1-based; 1 = base color
@@ -50,14 +51,29 @@ public class PaintModeView extends FrameLayout {
     private TextView brushTypeBtn;
 
     public PaintModeView(Context ctx, GLView glView, Runnable onExit) {
+        this(ctx, glView, onExit, GLRenderer.PAINT_MODE_COLOR);
+    }
+
+    public PaintModeView(Context ctx, GLView glView, Runnable onExit, int mode) {
         super(ctx);
         this.glView = glView;
         this.onExit = onExit;
+        this.mode = mode;
         this.slots = Prefs.getFilamentSlots();
-        if (slots.size() < 2) selectedFilament = 1;
+        if (mode != GLRenderer.PAINT_MODE_COLOR) {
+            selectedFilament = 1; // enforce / fuzzy
+        } else if (slots.size() < 2) {
+            selectedFilament = 1;
+        }
         build(ctx);
         glView.setPaintBrushActive(true);
+        if (!isColorMode()) {
+            final int s = selectedFilament;
+            runOnGl(() -> glView.getRenderer().setPaintFilament(s));
+        }
     }
+
+    private boolean isColorMode() { return mode == GLRenderer.PAINT_MODE_COLOR; }
 
     private void runOnGl(Runnable r) {
         glView.queueEvent(() -> {
@@ -93,43 +109,59 @@ public class PaintModeView extends FrameLayout {
         panel.setBackgroundResource(R.drawable.bottom_sheet_rounded_background);
         panel.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ThemesRepo.getColor(R.attr.dialogBackground)));
 
-        // Base filament selector
-        panel.addView(label(ctx, "Base filament"));
-        HorizontalScrollView baseScroll = new HorizontalScrollView(ctx);
-        baseScroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout baseRow = new LinearLayout(ctx);
-        baseRow.setOrientation(LinearLayout.HORIZONTAL);
-        for (int i = 0; i < slots.size(); i++) {
-            final int filament = i + 1;
-            int color = slots.get(i).color | 0xFF000000;
-            View sw = new View(ctx);
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(color);
-            bg.setCornerRadius(ViewUtils.dp(10));
-            if (ColorUtils.calculateLuminance(color) > 0.85f) bg.setStroke(ViewUtils.dp(1), ThemesRepo.getColor(R.attr.dividerColor));
-            sw.setBackground(bg);
-            sw.setOnClickListener(v -> runOnGl(() -> {
-                int obj = glView.getRenderer().getPaintObject();
-                if (obj != -1) glView.getRenderer().setObjectBaseFilament(obj, filament);
-            }));
-            baseRow.addView(sw, new LinearLayout.LayoutParams(ViewUtils.dp(36), ViewUtils.dp(36)) {{ rightMargin = ViewUtils.dp(8); }});
-        }
-        baseScroll.addView(baseRow);
-        panel.addView(baseScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
-            bottomMargin = ViewUtils.dp(10);
-        }});
+        if (isColorMode()) {
+            // Base filament selector
+            panel.addView(label(ctx, "Base filament"));
+            HorizontalScrollView baseScroll = new HorizontalScrollView(ctx);
+            baseScroll.setHorizontalScrollBarEnabled(false);
+            LinearLayout baseRow = new LinearLayout(ctx);
+            baseRow.setOrientation(LinearLayout.HORIZONTAL);
+            for (int i = 0; i < slots.size(); i++) {
+                final int filament = i + 1;
+                int color = slots.get(i).color | 0xFF000000;
+                View sw = new View(ctx);
+                GradientDrawable bg = new GradientDrawable();
+                bg.setColor(color);
+                bg.setCornerRadius(ViewUtils.dp(10));
+                if (ColorUtils.calculateLuminance(color) > 0.85f) bg.setStroke(ViewUtils.dp(1), ThemesRepo.getColor(R.attr.dividerColor));
+                sw.setBackground(bg);
+                sw.setOnClickListener(v -> runOnGl(() -> {
+                    int obj = glView.getRenderer().getPaintObject();
+                    if (obj != -1) glView.getRenderer().setObjectBaseFilament(obj, filament);
+                }));
+                baseRow.addView(sw, new LinearLayout.LayoutParams(ViewUtils.dp(36), ViewUtils.dp(36)) {{ rightMargin = ViewUtils.dp(8); }});
+            }
+            baseScroll.addView(baseRow);
+            panel.addView(baseScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+                bottomMargin = ViewUtils.dp(10);
+            }});
 
-        // Paint color swatches
-        panel.addView(label(ctx, "Paint with"));
-        HorizontalScrollView scroll = new HorizontalScrollView(ctx);
-        scroll.setHorizontalScrollBarEnabled(false);
-        swatchRow = new LinearLayout(ctx);
-        swatchRow.setOrientation(LinearLayout.HORIZONTAL);
-        scroll.addView(swatchRow);
-        rebuildSwatches(ctx);
-        panel.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
-            bottomMargin = ViewUtils.dp(10);
-        }});
+            // Paint color swatches
+            panel.addView(label(ctx, "Paint with"));
+            HorizontalScrollView scroll = new HorizontalScrollView(ctx);
+            scroll.setHorizontalScrollBarEnabled(false);
+            swatchRow = new LinearLayout(ctx);
+            swatchRow.setOrientation(LinearLayout.HORIZONTAL);
+            scroll.addView(swatchRow);
+            rebuildSwatches(ctx);
+            panel.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+                bottomMargin = ViewUtils.dp(10);
+            }});
+        } else {
+            // Enforce / Block / Erase selector for support, seam, and fuzzy-skin painting.
+            panel.addView(label(ctx, "Paint with"));
+            LinearLayout stateRow = new LinearLayout(ctx);
+            stateRow.setOrientation(LinearLayout.HORIZONTAL);
+            String enforceLabel = mode == GLRenderer.PAINT_MODE_FUZZY ? "Fuzzy" : "Enforce";
+            stateRow.addView(stateButton(ctx, enforceLabel, 1, 0xFF2ECC71), stateLp());
+            if (mode != GLRenderer.PAINT_MODE_FUZZY) {
+                stateRow.addView(stateButton(ctx, "Block", 2, 0xFFE74C3C), stateLp());
+            }
+            stateRow.addView(stateButton(ctx, "Erase", 0, ThemesRepo.getColor(android.R.attr.colorControlHighlight)), stateLp());
+            panel.addView(stateRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+                bottomMargin = ViewUtils.dp(10);
+            }});
+        }
 
         // Tools row
         LinearLayout tools = new LinearLayout(ctx);
@@ -356,5 +388,46 @@ public class PaintModeView extends FrameLayout {
             bg.setStroke(ViewUtils.dp(1), ThemesRepo.getColor(R.attr.dividerColor));
         }
         v.setBackground(bg);
+    }
+
+    // --- Enforce / Block / Erase selector (support, seam, fuzzy modes) ---
+    private final java.util.List<TextView> stateButtons = new java.util.ArrayList<>();
+    private final java.util.List<Integer> stateButtonValues = new java.util.ArrayList<>();
+    private final java.util.List<Integer> stateButtonColors = new java.util.ArrayList<>();
+
+    private LinearLayout.LayoutParams stateLp() {
+        return new LinearLayout.LayoutParams(0, ViewUtils.dp(44), 1f) {{ leftMargin = rightMargin = ViewUtils.dp(4); }};
+    }
+
+    private TextView stateButton(Context ctx, String label, int state, int activeColor) {
+        TextView t = new TextView(ctx);
+        t.setText(label);
+        t.setGravity(Gravity.CENTER);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        t.setTypeface(ViewUtils.getTypeface(ViewUtils.ROBOTO_MEDIUM));
+        stateButtons.add(t);
+        stateButtonValues.add(state);
+        stateButtonColors.add(activeColor);
+        t.setOnClickListener(v -> {
+            selectedFilament = state;
+            runOnGl(() -> glView.getRenderer().setPaintFilament(state));
+            restyleStateButtons();
+        });
+        restyleStateButtons();
+        return t;
+    }
+
+    private void restyleStateButtons() {
+        for (int i = 0; i < stateButtons.size(); i++) {
+            boolean sel = stateButtonValues.get(i) == selectedFilament;
+            int activeColor = stateButtonColors.get(i);
+            TextView t = stateButtons.get(i);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(ViewUtils.dp(12));
+            bg.setColor(sel ? activeColor : ThemesRepo.getColor(android.R.attr.colorControlHighlight));
+            t.setBackground(bg);
+            boolean lightActive = ColorUtils.calculateLuminance(activeColor) > 0.5f;
+            t.setTextColor(sel ? (lightActive ? 0xFF000000 : 0xFFFFFFFF) : ThemesRepo.getColor(android.R.attr.textColorPrimary));
+        }
     }
 }

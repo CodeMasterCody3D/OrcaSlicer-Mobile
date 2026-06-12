@@ -64,6 +64,8 @@ struct GLModelRef {
 struct PaintSessionRef {
     ModelRef* model = nullptr;
     int objIdx = -1;
+    // 0 = color (mmu segmentation), 1 = support, 2 = seam, 3 = fuzzy skin.
+    int mode = 0;
     TriangleMesh mesh;
     AABBMesh* emesh = nullptr;
     std::unique_ptr<Slic3r::TriangleSelector> selector;
@@ -597,6 +599,28 @@ extern "C" {
         return true;
     }
 
+    // Split the selected object into separate objects (by connected mesh parts for a single-volume
+    // object, or by volume for a multi-volume assembly). split() appends the new objects to the
+    // model and preserves painting; we then drop the original. Returns the number of pieces, or 0
+    // if there was nothing to split.
+    JNIEXPORT jint JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1split(JNIEnv* env, jclass, jlong ptr, jint i) {
+        ModelRef* modelRef = (ModelRef*) (intptr_t) ptr;
+        if (modelRef == nullptr) return 0;
+        Model& model = modelRef->model;
+        if (i < 0 || i >= (int) model.objects.size()) return 0;
+        size_t before = model.objects.size();
+        ModelObjectPtrs new_objects;
+        model.objects[i]->split(&new_objects, true);
+        if (new_objects.size() <= 1) {
+            // Nothing meaningful to split: remove anything split() appended, keep the original.
+            while (model.objects.size() > before)
+                model.delete_object(model.objects.size() - 1);
+            return 0;
+        }
+        model.delete_object(i);
+        return (jint) new_objects.size();
+    }
+
     JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1translate(JNIEnv* env, jclass, jlong ptr, jint i, jdouble x, jdouble y, jdouble z) {
         ModelRef* model = (ModelRef *) (intptr_t) ptr;
         model->model.objects[i]->translate(x, y, z);
@@ -999,6 +1023,25 @@ extern "C" {
             if (config.option("curr_bed_type", false) == nullptr)
                 config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPEI));
 
+            // An imported project config can itself declare multiple filaments (e.g. a Bambu 3MF's
+            // project_settings carries 8-entry filament_colour/filament_diameter vectors) while other
+            // per-filament vectors it carries stay single-entry (filament_map, filament_self_index,
+            // filament_is_support, ...). Desktop's preset layer keeps these consistent; here we must
+            // do it ourselves: adopt the config's filament count so the consistency fixups below run
+            // even when the app didn't request multicolor painting. Otherwise the engine's wipe
+            // tower / flush-volume ordering indexes the short vectors out of bounds → SIGSEGV.
+            {
+                int cfgFilaments = 0;
+                if (auto* fc = dynamic_cast<const ConfigOptionStrings*>(config.option("filament_colour", false)))
+                    cfgFilaments = std::max(cfgFilaments, (int) fc->values.size());
+                if (auto* fd = dynamic_cast<const ConfigOptionFloats*>(config.option("filament_diameter", false)))
+                    cfgFilaments = std::max(cfgFilaments, (int) fd->values.size());
+                if (cfgFilaments > numFilaments) {
+                    __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "config declares %d filaments (app requested %d); normalizing", cfgFilaments, (int) numFilaments);
+                    numFilaments = cfgFilaments;
+                }
+            }
+
             // Multi-color: declare N filaments (resizing all filament vectors) + their colors so the
             // engine runs MMU segmentation on the painted facets and emits tool changes.
             if (numFilaments > 1) {
@@ -1109,21 +1152,31 @@ extern "C" {
                 // GCode::append_full_config requires matrix.size() == N^2 * flush_multiplier.size()
                 // and throws otherwise, so rebuild the flush vectors whenever the sizes disagree.
                 {
-                    size_t heads = 1;
-                    auto* fm = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_multiplier", false));
-                    if (fm != nullptr && !fm->values.empty()) heads = fm->values.size();
-                    else config.set_key_value("flush_multiplier", new ConfigOptionFloats(std::vector<double>(heads, 0.3)));
-
+                    // The engine (ToolOrdering::reorder_extruders_for_minimum_flush_volume,
+                    // Print::_make_wipe_tower) treats flush_volumes_matrix as `nozzle_diameter.size()`
+                    // blocks, each a `filament_colour.size()` x `filament_colour.size()` matrix. If our
+                    // matrix is sized differently the engine slices past the end → SIGSEGV. Size it to
+                    // exactly that layout, keyed off filament_colour so the per-nozzle dimension matches
+                    // the engine's `number_of_extruders`.
                     size_t n = (size_t) numFilaments;
-                    auto* mx = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_volumes_matrix", false));
-                    if (mx == nullptr || mx->values.size() != n * n * heads) {
-                        // Engine default volumes: 280mm^3 between distinct filaments, 0 on the diagonal.
-                        std::vector<double> matrix(n * n * heads, 280.);
-                        for (size_t h = 0; h < heads; ++h)
-                            for (size_t i = 0; i < n; ++i)
-                                matrix[h * n * n + i * n + i] = 0.;
-                        config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(matrix));
-                    }
+                    if (auto* fc = dynamic_cast<const ConfigOptionStrings*>(config.option("filament_colour", false)))
+                        n = std::max(n, fc->values.size());
+
+                    size_t nozzles = 1;
+                    if (auto* nd = dynamic_cast<const ConfigOptionFloats*>(config.option("nozzle_diameter", false)))
+                        if (!nd->values.empty()) nozzles = nd->values.size();
+
+                    // Engine default volumes: 280mm^3 between distinct filaments, 0 on the diagonal.
+                    std::vector<double> matrix(n * n * nozzles, 280.);
+                    for (size_t z = 0; z < nozzles; ++z)
+                        for (size_t i = 0; i < n; ++i)
+                            matrix[z * n * n + i * n + i] = 0.;
+                    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(matrix));
+
+                    // flush_multiplier is indexed per nozzle; one entry per nozzle.
+                    auto* fm = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_multiplier", false));
+                    if (fm == nullptr || fm->values.size() != nozzles)
+                        config.set_key_value("flush_multiplier", new ConfigOptionFloats(std::vector<double>(nozzles, 0.3)));
 
                     auto* fv = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_volumes_vector", false));
                     if (fv == nullptr || fv->values.size() != n * 2)
@@ -1145,7 +1198,46 @@ extern "C" {
 
                 int fdSize = 0;
                 if (auto* fd = dynamic_cast<const ConfigOptionFloats*>(config.option("filament_diameter", false))) fdSize = (int) fd->values.size();
-                __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "multicolor slice: numFilaments=%d maxPainted=%d filament_diameter.size=%d", (int) numFilaments, maxPaintedState, fdSize);
+                int fcSize = 0, mxSize = 0, ndSize = 0, fmSize = 0;
+                if (auto* o = dynamic_cast<const ConfigOptionStrings*>(config.option("filament_colour", false))) fcSize = (int) o->values.size();
+                if (auto* o = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_volumes_matrix", false))) mxSize = (int) o->values.size();
+                if (auto* o = dynamic_cast<const ConfigOptionFloats*>(config.option("nozzle_diameter", false))) ndSize = (int) o->values.size();
+                if (auto* o = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_multiplier", false))) fmSize = (int) o->values.size();
+                __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "multicolor slice: numFilaments=%d maxPainted=%d filament_diameter.size=%d filament_colour.size=%d flush_matrix.size=%d nozzle_diameter.size=%d flush_multiplier.size=%d", (int) numFilaments, maxPaintedState, fdSize, fcSize, mxSize, ndSize, fmSize);
+            }
+
+            // Always normalize the purge/flush matrix to the engine's expected layout:
+            // nozzle_diameter.size() blocks, each filament_colour.size() x filament_colour.size().
+            // Imported project configs (e.g. a Bambu 3MF) can carry a wipe tower with a mis-sized
+            // matrix even when the app's multicolor path above didn't run, which makes
+            // _make_wipe_tower / reorder_extruders_for_minimum_flush_volume index out of bounds.
+            {
+                size_t fc = 0;
+                if (auto* o = dynamic_cast<const ConfigOptionStrings*>(config.option("filament_colour", false)))
+                    fc = o->values.size();
+                if (fc > 1) {
+                    size_t nozzles = 1;
+                    if (auto* nd = dynamic_cast<const ConfigOptionFloats*>(config.option("nozzle_diameter", false)))
+                        if (!nd->values.empty()) nozzles = nd->values.size();
+
+                    auto* mx = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_volumes_matrix", false));
+                    if (mx == nullptr || mx->values.size() != fc * fc * nozzles) {
+                        __android_log_print(ANDROID_LOG_WARN, "BeamPaint",
+                            "normalizing flush matrix: filament_colour=%zu nozzles=%zu old_matrix=%d -> %zu",
+                            fc, nozzles, mx ? (int) mx->values.size() : -1, fc * fc * nozzles);
+                        std::vector<double> matrix(fc * fc * nozzles, 280.);
+                        for (size_t z = 0; z < nozzles; ++z)
+                            for (size_t i = 0; i < fc; ++i)
+                                matrix[z * fc * fc + i * fc + i] = 0.;
+                        config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(matrix));
+                    }
+                    auto* fm = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_multiplier", false));
+                    if (fm == nullptr || fm->values.size() != nozzles)
+                        config.set_key_value("flush_multiplier", new ConfigOptionFloats(std::vector<double>(nozzles, 0.3)));
+                    auto* fv = dynamic_cast<const ConfigOptionFloats*>(config.option("flush_volumes_vector", false));
+                    if (fv == nullptr || fv->values.size() != fc * 2)
+                        config.set_key_value("flush_volumes_vector", new ConfigOptionFloats(std::vector<double>(fc * 2, 140.)));
+                }
             }
 
             for (auto* mo : model->model.objects) {
@@ -2072,6 +2164,16 @@ extern "C" {
             ref->viewer.set_tool_colors(palette);
     }
 
+    JNIEXPORT jboolean JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1is_1option_1visible(JNIEnv* env, jclass, jlong ptr, jint optionType) {
+        GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
+        return (jboolean) ref->viewer.is_option_visible(static_cast<libvgcode::EOptionType>(optionType));
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_vgcode_1toggle_1option_1visibility(JNIEnv* env, jclass, jlong ptr, jint optionType) {
+        GCodeViewerRef* ref = (GCodeViewerRef*) (intptr_t) ptr;
+        ref->viewer.toggle_option_visibility(static_cast<libvgcode::EOptionType>(optionType));
+    }
+
     // ---- Multi-color painting (mmu segmentation) ----
 
     static Slic3r::EnforcerBlockerType paint_state(jint filamentIdx) {
@@ -2081,7 +2183,17 @@ extern "C" {
         return static_cast<Slic3r::EnforcerBlockerType>(v);
     }
 
-    JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1begin(JNIEnv* env, jclass, jlong modelPtr, jint objIdx) {
+    // The facet channel a paint session reads/writes, by mode: 0 color, 1 support, 2 seam, 3 fuzzy.
+    static Slic3r::FacetsAnnotation& facets_for_mode(Slic3r::ModelVolume* v, int mode) {
+        switch (mode) {
+            case 1:  return v->supported_facets;
+            case 2:  return v->seam_facets;
+            case 3:  return v->fuzzy_skin_facets;
+            default: return v->mmu_segmentation_facets;
+        }
+    }
+
+    JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1begin(JNIEnv* env, jclass, jlong modelPtr, jint objIdx, jint mode) {
         ModelRef* mRef = (ModelRef*) (intptr_t) modelPtr;
         if (objIdx < 0 || objIdx >= (int) mRef->model.objects.size()) return 0;
         ModelObject* obj = mRef->model.objects[objIdx];
@@ -2089,12 +2201,13 @@ extern "C" {
         PaintSessionRef* s = new PaintSessionRef();
         s->model = mRef;
         s->objIdx = objIdx;
+        s->mode = mode;
         // Use the same merged object mesh the GLModel/raycaster uses, so hit coords and triangle
         // indices line up exactly. Paint states are stored per triangle index, so they still map
-        // back to volume[0]'s mmu_segmentation_facets (single-volume objects).
+        // back to volume[0]'s facet annotation (single-volume objects).
         s->mesh = obj->mesh();
         s->selector = std::make_unique<Slic3r::TriangleSelector>(s->mesh);
-        const auto& data = obj->volumes[0]->mmu_segmentation_facets.get_data();
+        const auto& data = facets_for_mode(obj->volumes[0], mode).get_data();
         if (!data.triangles_to_split.empty())
             s->selector->deserialize(data, true);
         s->emesh = new AABBMesh(s->mesh, true);
@@ -2215,21 +2328,16 @@ extern "C" {
     JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_paint_1commit(JNIEnv* env, jclass, jlong sessionPtr) {
         PaintSessionRef* s = (PaintSessionRef*) (intptr_t) sessionPtr;
         ModelObject* obj = s->model->model.objects[s->objIdx];
-        
-        // Multi-volume objects: the merged session mesh matches obj->mesh(). We need to 
-        // split its facet states back to the individual volumes.
-        int triOffset = 0;
+
+        // The merged session mesh matches obj->mesh(); commit to volumes[0] as the standard for
+        // single-part models. Write to the facet channel for this session's mode.
         for (auto* v : obj->volumes) {
-            int numTris = (int) v->mesh().its.indices.size();
-            // For now, commit to volumes[0] as it's the standard for single-part models like Benchy.
-            // We set its extruder to 0 (Auto) if it has ANY painting.
             if (v == obj->volumes[0]) {
-                v->mmu_segmentation_facets.set(*s->selector);
+                facets_for_mode(v, s->mode).set(*s->selector);
             }
-            
-            if (!v->mmu_segmentation_facets.get_data().triangles_to_split.empty()) {
+            // Color painting needs the volume's extruder set to Auto so per-facet filaments apply.
+            if (s->mode == 0 && !v->mmu_segmentation_facets.get_data().triangles_to_split.empty()) {
                 v->config.set("extruder", 0);
-                __android_log_print(ANDROID_LOG_WARN, "BeamPaint", "committed paint to volume: %s, set extruder=0 (Auto)", v->name.c_str());
             }
         }
     }

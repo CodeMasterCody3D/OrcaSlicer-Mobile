@@ -311,13 +311,17 @@ public class BedFragment extends Fragment {
     }
 
     public void enterPaintMode(int objectIndex) {
+        enterPaintMode(objectIndex, ru.ytkab0bp.slicebeam.render.GLRenderer.PAINT_MODE_COLOR);
+    }
+
+    public void enterPaintMode(int objectIndex, int mode) {
         Context ctx = getContext();
         if (ctx == null || glView == null || objectIndex == -1 || paintModeView != null) return;
         glView.queueEvent(() -> {
-            glView.getRenderer().beginPaint(objectIndex);
+            glView.getRenderer().beginPaint(objectIndex, mode);
             glView.requestRender();
         });
-        paintModeView = new ru.ytkab0bp.slicebeam.view.PaintModeView(ctx, glView, this::exitPaintMode);
+        paintModeView = new ru.ytkab0bp.slicebeam.view.PaintModeView(ctx, glView, this::exitPaintMode, mode);
         overlayLayout.addView(paintModeView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
@@ -1213,6 +1217,30 @@ public class BedFragment extends Fragment {
         if (platesModels.isEmpty()) return;
         Model currentModel = glView.getRenderer().getModel();
         platesModels.set(currentPlateIndex, currentModel);
+    }
+
+    /** Split the selected object into separate objects (connected parts / volumes), then re-arrange. */
+    public void splitSelectedObject() {
+        int idx = glView.getRenderer().getSelectedObject();
+        Model model = glView.getRenderer().getModel();
+        if (model == null || idx == -1) return;
+        glView.queueEvent(() -> {
+            int count = model.split(idx);
+            if (count <= 1) {
+                SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(R.string.MenuToolbarSplitNothing));
+                return;
+            }
+            glView.getRenderer().setSelectedObject(-1);
+            Bed3D bed = glView.getRenderer().getBed();
+            if (bed != null) bed.arrange(model);
+            glView.getRenderer().resetGlModels();
+            glView.requestRender();
+            ViewUtils.postOnMainThread(() -> {
+                updateModel();
+                SliceBeam.EVENT_BUS.fireEvent(new ru.ytkab0bp.slicebeam.events.ObjectsListChangedEvent());
+                SliceBeam.EVENT_BUS.fireEvent(new NeedSnackbarEvent(R.string.MenuToolbarSplitDone, count));
+            });
+        });
     }
 
     public enum MenuCategory {

@@ -1290,7 +1290,15 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     public boolean isBrushSphere() { return brushSphere; }
     public void setBrushSphere(boolean s) { brushSphere = s; }
 
-    public void beginPaint(int objIdx) {
+    public static final int PAINT_MODE_COLOR = 0;
+    public static final int PAINT_MODE_SUPPORT = 1;
+    public static final int PAINT_MODE_SEAM = 2;
+    public static final int PAINT_MODE_FUZZY = 3;
+    private int paintModeKind = PAINT_MODE_COLOR;
+
+    public void beginPaint(int objIdx) { beginPaint(objIdx, PAINT_MODE_COLOR); }
+
+    public void beginPaint(int objIdx, int mode) {
         if (model == null || objIdx < 0 || objIdx >= model.getObjectsCount()) return;
         endPaintInternal(false);
         // Ensure the object's GLModel + raycast data exist (built lazily in onDrawFrame otherwise).
@@ -1299,12 +1307,21 @@ public class GLRenderer implements GLSurfaceView.Renderer {
             gm.initFrom(model, glModels.size());
             glModels.add(gm);
         }
-        paintSession = new PaintSession(model, objIdx);
+        paintModeKind = mode;
+        paintSession = new PaintSession(model, objIdx, mode);
         if (!paintSession.isValid()) { paintSession = null; return; }
         paintObject = objIdx;
         paintMode = true;
         paintPalette = Prefs.getFilamentPalette();
         rebuildPaintOverlays();
+    }
+
+    /** Overlay color for a painted state in the current paint mode. */
+    private int paintStateColor(int f) {
+        if (paintModeKind == PAINT_MODE_COLOR)
+            return (f - 1) < paintPalette.length ? paintPalette[f - 1] : cachedAccentColor;
+        if (paintModeKind == PAINT_MODE_FUZZY) return 0xFF3F8CFF;      // fuzzy = blue
+        return f == 2 ? 0xFFE74C3C : 0xFF2ECC71;                       // block = red, enforce = green
     }
 
     public void endPaint(boolean commit) {
@@ -1369,14 +1386,15 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         for (PaintOverlay o : paintOverlays) o.model.release();
         paintOverlays.clear();
         if (paintSession == null) return;
-        int n = Math.max(paintPalette.length, 1);
+        // Color mode covers the full filament palette; enforce/block modes only use states 1 and 2.
+        int n = paintModeKind == PAINT_MODE_COLOR ? Math.max(paintPalette.length, 1) : 2;
         for (int f = 1; f <= n; f++) {
             GLModel gl = new GLModel();
             int tris = paintSession.buildOverlay(gl, f);
             if (tris > 0) {
                 PaintOverlay o = new PaintOverlay();
                 o.model = gl;
-                o.color = (f - 1) < paintPalette.length ? paintPalette[f - 1] : cachedAccentColor;
+                o.color = paintStateColor(f);
                 paintOverlays.add(o);
             } else {
                 gl.release();

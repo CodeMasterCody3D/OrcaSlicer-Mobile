@@ -189,6 +189,7 @@ public class Native {
     static native int model_get_objects_count(long ptr);
     static native void model_add_object_from_another(long ptr, long from, int i);
     static native void model_delete_object(long ptr, int i);
+    static native int model_split(long ptr, int i);
     static native double[] model_get_translation(long ptr, int objectIndex);
     static native double[] model_get_scale(long ptr, int objectIndex);
     static native double[] model_get_mirror(long ptr, int objectIndex);
@@ -215,7 +216,7 @@ public class Native {
     static native int model_get_extruder(long ptr, int i);
     static native void model_set_extruder(long ptr, int i, int extruder);
     // ---- Multi-color painting (mmu segmentation) ----
-    static native long paint_begin(long modelPtr, int objIdx);
+    static native long paint_begin(long modelPtr, int objIdx, int mode);
     static native double[] paint_raycast(long sessionPtr, double[] origin, double[] dir);
     static native void paint_brush(long sessionPtr, double[] hit, int facetStart, double radius, int filamentIdx, double[] cameraPos, boolean sphere);
     static native void paint_bucket(long sessionPtr, double[] hit, int facetStart, int filamentIdx, boolean propagate, double angle);
@@ -258,6 +259,8 @@ public class Native {
     static native void vgcode_set_view_type(long ptr, int type);
     static native int vgcode_get_view_type(long ptr);
     static native void vgcode_set_tool_colors(long ptr, int[] colors);
+    static native boolean vgcode_is_option_visible(long ptr, int optionType);
+    static native void vgcode_toggle_option_visibility(long ptr, int optionType);
     static native void vgcode_reset(long ptr);
     static native void vgcode_release(long ptr);
 
