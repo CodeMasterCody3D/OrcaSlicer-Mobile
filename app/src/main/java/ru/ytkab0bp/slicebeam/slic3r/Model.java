@@ -202,6 +202,11 @@ public class Model {
         return Native.model_build_paint_overlay(pointer, i, gl.pointer, filamentIdx);
     }
 
+    /** Highest filament index (1-based) painted on object i, or 0 if none. */
+    public int paintMaxFilament(int i) {
+        return Native.model_paint_max_filament(pointer, i);
+    }
+
     public void autoOrient(int i) {
         Native.model_auto_orient(pointer, i);
     }

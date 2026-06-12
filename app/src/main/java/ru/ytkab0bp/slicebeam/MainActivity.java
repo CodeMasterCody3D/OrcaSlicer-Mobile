@@ -71,6 +71,7 @@ import ru.ytkab0bp.slicebeam.slic3r.Slic3rConfigWrapper;
 import ru.ytkab0bp.slicebeam.slic3r.Slic3rRuntimeError;
 import ru.ytkab0bp.slicebeam.theme.ThemesRepo;
 import ru.ytkab0bp.slicebeam.utils.IOUtils;
+import ru.ytkab0bp.slicebeam.utils.FilamentSlot;
 import ru.ytkab0bp.slicebeam.utils.Prefs;
 import ru.ytkab0bp.slicebeam.utils.ViewUtils;
 import ru.ytkab0bp.slicebeam.view.SnackbarsLayout;
@@ -593,6 +594,42 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Adopt the project's filament colors as the app's paint palette so a model painted on
+     * desktop renders with matching colors. Painted facets are stored per-filament-index in the
+     * mesh; without a palette entry for each index the overlay for that color is never built and
+     * the model looks unpainted. Returns true if the palette was changed.
+     */
+    private boolean applyProjectFilamentColors(JSONObject projectSettings) {
+        if (projectSettings == null) return false;
+        try {
+            JSONArray colors = projectSettings.optJSONArray("filament_colour");
+            if (colors == null || colors.length() == 0) return false;
+            JSONArray types = projectSettings.optJSONArray("filament_type");
+            List<FilamentSlot> slots = new ArrayList<>();
+            for (int i = 0; i < colors.length() && i < Prefs.MAX_FILAMENT_COLORS; i++) {
+                String hex = colors.optString(i, "").trim();
+                if (hex.startsWith("#")) hex = hex.substring(1);
+                if (hex.length() > 6) hex = hex.substring(0, 6); // drop alpha if present
+                int color;
+                try {
+                    color = (int) Long.parseLong(hex, 16) | 0xFF000000;
+                } catch (NumberFormatException e) {
+                    color = 0xFF1AC5A2;
+                }
+                String type = types != null ? types.optString(i, "PLA") : "PLA";
+                if (type == null || type.isEmpty()) type = "PLA";
+                slots.add(new FilamentSlot(color, type));
+            }
+            if (slots.isEmpty()) return false;
+            Prefs.setFilamentSlots(slots);
+            return true;
+        } catch (Exception e) {
+            Log.w("MainActivity", "Failed to apply project filament colors", e);
+            return false;
+        }
+    }
+
     private int countPlates(ZipFile zip) throws IOException {
         int maxPlate = 0;
         ZipEntry modelSettings = zip.getEntry("Metadata/model_settings.config");
@@ -716,6 +753,11 @@ public class MainActivity extends AppCompatActivity {
                 SliceBeam.CONFIG.presets.put("printer", selectedPrinter);
                 changed = true;
             }
+
+            // Adopt the project's filament colors so a painted model renders with matching colors.
+            // Set before loadModel runs; the renderer reads the palette fresh and builds the
+            // committed paint overlays on first draw after the model loads.
+            applyProjectFilamentColors(projectSettings);
 
             result.importedProfiles = w.printConfigs.size() + w.filamentConfigs.size() + w.printerConfigs.size();
             if (changed || result.importedProfiles > 0) {

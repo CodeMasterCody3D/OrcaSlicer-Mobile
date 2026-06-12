@@ -2218,17 +2218,44 @@ extern "C" {
 
     // Build a GLModel from the committed mmu painting on an object's volume[0] (no active session),
     // so painted colors persist on the model after exiting paint mode. Returns the triangle count.
+    // Accumulate, in the object's merged-mesh coordinate space, the facets painted with the given
+    // filament state across ALL model-part volumes. A Bambu/Orca "assembly" loads as one
+    // ModelObject with several volumes (figure + accessories), each carrying its own paint data;
+    // the rendered GLModel is obj->mesh() (all model-part volumes merged, each transformed by its
+    // volume matrix then the instance matrix). The overlay must merge the same volumes with the
+    // same transforms, or only the first volume's paint shows (and misaligned against the merge).
+    static indexed_triangle_set accumulate_paint_facets(Slic3r::ModelObject* obj, Slic3r::EnforcerBlockerType state) {
+        indexed_triangle_set out;
+        for (const Slic3r::ModelInstance* inst : obj->instances) {
+            const Slic3r::Transform3d inst_m = inst->get_matrix();
+            for (const Slic3r::ModelVolume* v : obj->volumes) {
+                if (!v->is_model_part()) continue;
+                const auto& data = v->mmu_segmentation_facets.get_data();
+                if (data.triangles_to_split.empty()) continue;
+                TriangleMesh vmesh = v->mesh();
+                Slic3r::TriangleSelector sel(vmesh);
+                sel.deserialize(data, true);
+                indexed_triangle_set part = sel.get_facets(state);
+                if (part.indices.empty()) continue;
+                const Slic3r::Transform3d m = inst_m * v->get_matrix();
+                const int base = (int) out.vertices.size();
+                out.vertices.reserve(out.vertices.size() + part.vertices.size());
+                for (const stl_vertex& vert : part.vertices)
+                    out.vertices.emplace_back((m * vert.cast<double>()).cast<float>());
+                out.indices.reserve(out.indices.size() + part.indices.size());
+                for (const stl_triangle_vertex_indices& tri : part.indices)
+                    out.indices.emplace_back(tri + stl_triangle_vertex_indices(base, base, base));
+            }
+        }
+        return out;
+    }
+
     JNIEXPORT jint JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1build_1paint_1overlay(JNIEnv* env, jclass, jlong modelPtr, jint objIdx, jlong glPtr, jint filamentIdx) {
         ModelRef* m = (ModelRef*) (intptr_t) modelPtr;
         if (objIdx < 0 || objIdx >= (int) m->model.objects.size()) return 0;
         ModelObject* obj = m->model.objects[objIdx];
         if (obj->volumes.empty()) return 0;
-        const auto& data = obj->volumes[0]->mmu_segmentation_facets.get_data();
-        if (data.triangles_to_split.empty()) return 0;
-        TriangleMesh mesh = obj->mesh();
-        Slic3r::TriangleSelector sel(mesh);
-        sel.deserialize(data, true);
-        indexed_triangle_set its = sel.get_facets(paint_state(filamentIdx));
+        indexed_triangle_set its = accumulate_paint_facets(obj, paint_state(filamentIdx));
         GLModelRef* g = (GLModelRef*) (intptr_t) glPtr;
         g->model.reset();
         if (!its.indices.empty())
@@ -2240,8 +2267,36 @@ extern "C" {
         ModelRef* m = (ModelRef*) (intptr_t) modelPtr;
         if (objIdx < 0 || objIdx >= (int) m->model.objects.size()) return false;
         ModelObject* obj = m->model.objects[objIdx];
-        if (obj->volumes.empty()) return false;
-        return !obj->volumes[0]->mmu_segmentation_facets.get_data().triangles_to_split.empty();
+        for (const Slic3r::ModelVolume* v : obj->volumes) {
+            if (v->is_model_part() && !v->mmu_segmentation_facets.get_data().triangles_to_split.empty())
+                return true;
+        }
+        return false;
+    }
+
+    // Highest filament index (1-based) that has any painted facets across the object's model-part
+    // volumes, or 0 if none. Lets the renderer build an overlay for every painted filament even
+    // when the user's configured palette has fewer slots than the model was painted with.
+    JNIEXPORT jint JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1paint_1max_1filament(JNIEnv* env, jclass, jlong modelPtr, jint objIdx) {
+        ModelRef* m = (ModelRef*) (intptr_t) modelPtr;
+        if (objIdx < 0 || objIdx >= (int) m->model.objects.size()) return 0;
+        ModelObject* obj = m->model.objects[objIdx];
+        int maxF = 0;
+        for (const Slic3r::ModelVolume* v : obj->volumes) {
+            if (!v->is_model_part()) continue;
+            const auto& data = v->mmu_segmentation_facets.get_data();
+            if (data.triangles_to_split.empty()) continue;
+            TriangleMesh vmesh = v->mesh();
+            Slic3r::TriangleSelector sel(vmesh);
+            sel.deserialize(data, true);
+            for (int f = (int) Slic3r::EnforcerBlockerType::ExtruderMax; f > maxF; --f) {
+                if (!sel.get_facets(static_cast<Slic3r::EnforcerBlockerType>(f)).indices.empty()) {
+                    maxF = f;
+                    break;
+                }
+            }
+        }
+        return (jint) maxF;
     }
 
     // Build a GLModel from the facets painted with the given filament (mesh-local coords), for

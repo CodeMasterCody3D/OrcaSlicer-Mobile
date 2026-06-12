@@ -1184,14 +1184,17 @@ public class GLRenderer implements GLSurfaceView.Renderer {
             list = new ArrayList<>();
             if (model != null && model.hasPaint(i)) {
                 int[] pal = paintPalette;
-                int n = Math.max(pal.length, 1);
+                // A model painted on desktop can use more filaments than the local palette has
+                // slots for; cover every painted filament so nothing renders as unpainted.
+                int maxPaint = model.paintMaxFilament(i);
+                int n = Math.min(Math.max(Math.max(pal.length, maxPaint), 1), Prefs.MAX_FILAMENT_COLORS);
                 for (int f = 1; f <= n; f++) {
                     GLModel gl = new GLModel();
                     int tris = model.buildPaintOverlay(i, gl, f);
                     if (tris > 0) {
                         PaintOverlay o = new PaintOverlay();
                         o.model = gl;
-                        o.color = (f - 1) < pal.length ? pal[f - 1] : cachedAccentColor;
+                        o.color = (f - 1) < pal.length ? pal[f - 1] : fallbackFilamentColor(f - 1);
                         list.add(o);
                     } else {
                         gl.release();
@@ -1201,6 +1204,13 @@ public class GLRenderer implements GLSurfaceView.Renderer {
             committedOverlays.put(i, list);
         }
         return list;
+    }
+
+    // Distinct color for a painted filament the local palette has no slot for. Spreads hues by
+    // the golden angle so adjacent filament indices stay visually separable.
+    private static int fallbackFilamentColor(int index) {
+        float hue = (index * 137.508f) % 360f;
+        return Color.HSVToColor(new float[]{hue, 0.65f, 0.95f});
     }
 
     private void invalidateCommittedOverlays(int i) {

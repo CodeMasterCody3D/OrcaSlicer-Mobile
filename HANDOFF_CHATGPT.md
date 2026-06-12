@@ -1,102 +1,46 @@
-# OrcaSlicer Mobile — Session Handoff (2026-06-11)
+# OrcaSlicer Mobile — Session Handoff (2026-06-11, evening)
 
-For the next AI continuing this work. Read this fully before touching anything.
+For the next AI. Read fully before touching anything.
 
 ## Project context
+- **Repo**: `/home/cody/workspace/OrcaSlicerMobileTestHandOffToGemini` (CORRECT folder; ignore `OrcaSlicerMobileTest`)
+- Android slicer (SliceBeam shell, pkg `ru.ytkab0bp.slicebeam`, appId `com.codemastercody3d.orcaslicermobile`) + real OrcaSlicer libslic3r via JNI.
+- **GitHub**: https://github.com/CodeMasterCody3D/OrcaSlicer-Mobile — branches cleaned up: **single `master` everywhere now**, plain `git push` works (no more `engine-swap:master`). Latest release **v0.4.0**.
+- **Build**: `./gradlew assembleDebug` → `app/build/outputs/apk/debug/OrcaSlicerMobile_<hash>.apk`. APK name embeds git hash, so it does NOT change until you commit.
+- **Native builds from source by default** (`usePrebuiltNative=false`). Changing `app/src/main/jni/**` triggers `:app:buildCMakeRelease[arm64-v8a]` (~35–42s). Java-only changes are fast (native cached). The lib is `libslic3r.so` (beam_native.cpp compiles INTO the `slic3r` CMake target, NOT a separate libbeam_native.so).
+- Verify a native symbol made it in: `unzip -o -q <apk> lib/arm64-v8a/libslic3r.so -d /tmp/x && tr -c '[:print:]' '\n' </tmp/x/lib/arm64-v8a/libslic3r.so | grep model_1paint_1max_1filament`
+- **Phone**: adb `R5CR60DKJGB`. Install `adb -s R5CR60DKJGB install -r <apk>`. User runs on-device tests himself — give steps. New to git — run it for him, explain plainly. Screenshot: `adb -s R5CR60DKJGB exec-out screencap -p > /tmp/x.png` then Read it.
+- Test file (the painted assembly): `/home/cody/Downloads/RunescapeRunearmorPainted+BambuLab+painted+file.3mf`. Unzipped copy at `/tmp/runescape/`.
 
-- **Repo**: `/home/cody/workspace/OrcaSlicerMobileTestHandOffToGemini` (this is the CORRECT folder; ignore `OrcaSlicerMobileTest`)
-- **What it is**: Android slicer (SliceBeam shell, package `ru.ytkab0bp.slicebeam`, appId `com.codemastercody3d.orcaslicermobile`) with the real OrcaSlicer libslic3r engine ported via JNI
-- **GitHub**: https://github.com/CodeMasterCody3D/OrcaSlicer-Mobile — local branch `engine-swap` pushes to remote `master` (`git push origin engine-swap:master`). Release v0.1.0 exists.
-- **Build**: `./gradlew assembleDebug` → `app/build/outputs/apk/debug/OrcaSlicerMobile_<hash>.apk` (~72MB now)
-- **User's phone**: adb device `R5CR60DKJGB`. Install: `adb -s R5CR60DKJGB install -r <apk>`. User prefers to run on-device tests themselves — give steps, don't drive taps.
-- **User is new to git** — explain in plain language, run git for them.
-- Sliced G-code lives at `/data/data/com.codemastercody3d.orcaslicermobile/cache/temp.gcode` on device; pull with `adb shell "run-as com.codemastercody3d.orcaslicermobile cat <path>" > local.gcode`.
-- Reference files: desktop `/home/cody/gcode/3DBenchy_PLA_34m50s.gcode`, `/home/cody/gcode/Stanford_Bunny_PLA_3h52m.gcode`; user's printer bundle `/home/cody/Desktop/Kreality Ender 3 Pro KlipperBlueBoy 0.4 nozzle.orca_printer`.
+## DONE & COMMITTED+PUSHED this session
+1. Multi-plate 3MF: commit `29e89f9` (load + switch). Then **multi-plate GRID rendering**, commit `6f2d363` (pushed, in v0.4.0):
+   - `GLRenderer.java`: renders ALL plates at once. Active plate = full color/editable; inactive = dimmed, no gizmos. New `setInactivePlates(models, offsets)`; draws extra beds + their models at grid offsets.
+   - `BedFragment.java`: eager-loads every plate; lays them in desktop's grid. **Plate grid math (from upstream OrcaSlicer PartPlate.cpp): stride = bedSize × 1.2** (LOGICAL_PART_PLATE_GAP=1/5); cols = `round(sqrt(count))` bumped up if `sqrt>round`; col→+X, row→−Y. CRITICAL: a 3MF's plate offsets use the **bed size the FILE was saved for** (read from `Metadata/project_settings.config` → `printable_area`), NOT the app's bed. `readProjectBedSize()` does this; each plate's objects are translated back to bed-local on load. (Earlier bug: used app bed 300 vs file bed 218 → models off-plate.)
+2. Branch cleanup + **v0.4.0** release (APK attached) via `gh release create`.
 
-## Architecture cheat-sheet (verified, don't re-derive)
+## ⚠️ UNCOMMITTED — the paint fix (just installed, awaiting user's on-device confirmation)
+**Problem**: Bambu/Orca painted 3MF loaded but showed mostly UNpainted. Two real bugs, both fixed:
 
-- Java `ConfigObject` stores config values; `put()/get()` rename keys through `KEY_MIGRATION` (legacy PrusaSlicer name ↔ Orca engine name), so values are STORED under Orca names. `ConfigObject.serialize()` writes flat `key = value` INI which the native side loads with `DynamicPrintConfig::load()`.
-- `Slic3rConfigWrapper.PRINT/FILAMENT/PRINTER_CONFIG_KEYS` are import whitelists (legacy names mostly, Orca names allowed too — the check is `contains(key) || contains(legacyKey(key))`). **Anything not whitelisted is silently dropped at import.**
-- `IOUtils.configJsonToIni(json, type, supportedKeys, inBundle)` converts Orca JSON profiles (from .orca_printer/.orca_filament bundles) → ConfigObject. `IOUtils.mapOrcaConfigKey` = `ConfigObject.legacyKey()` + special case `chamber_temperatures→chamber_temperature`.
-- Setup wizard = `SetupActivity` (ViewPager2, pages are SimpleRecyclerItems): Intro(0), PresetChoice(1), Profiles(2=PROFILES_INDEX), **Filaments(3, NEW this session)**, [Boosty], Finish. Bundled vendor INIs in `app/src/main/assets/orca_profiles/*.ini`, generated by `orcaslicer_mobile_assets/orca_ini_generator.py` from `resolved_orcaslicer_profiles.json` (built by `profile_builder.py` from `_orca_profiles_clone/resources/profiles`).
-- Engine BedType enum: `curr_bed_type` selects which `*_plate_temp` slots are used. App UI's bed temperature = legacy `bed_temperature` → stored as `hot_plate_temp`, so native pins `curr_bed_type = High Temp Plate (btPEI)` when unset (beam_native.cpp, after `config.normalize_fdm()`).
+### Bug 1 — palette too short (FIXED)
+Default filament palette = **1 slot** (`Prefs.getFilamentSlots`). `GLRenderer.getCommittedOverlays` only built one color overlay per palette slot → filaments 2..8 never drawn.
+- `MainActivity.java`: new `applyProjectFilamentColors(projectSettings)` reads `filament_colour`+`filament_type` from project_settings.config and calls `Prefs.setFilamentSlots(...)`. Called in `importEmbedded3mfProfiles` BEFORE `loadModel`, so overlays build with the file's colors (matches desktop). Added `import ...utils.FilamentSlot;`.
+- `GLRenderer.getCommittedOverlays`: loop bound now `min(max(palette.len, model.paintMaxFilament(i)), MAX_FILAMENT_COLORS=16)`; colors past palette use new `fallbackFilamentColor()` (golden-angle HSV). New native `model_paint_max_filament` (Native.java + Model.java `paintMaxFilament`).
 
-## What was done THIS session (all uncommitted!)
+### Bug 2 — multi-volume assembly (THE BIG ONE, FIXED)
+The Runescape file is an **assembly = 1 ModelObject with 3 volumes** (figure 7950 tris painted, accessories 1838 painted, support_blocker cube 12 unpainted). The rendered GLModel is `obj->mesh()` = ALL is_model_part volumes merged (each transformed by `inst->get_matrix() * v->get_matrix()`, in order; support_blocker excluded). But paint code read only `obj->volumes[0]` and deserialized it against the merged mesh → only one piece showed, misaligned.
+- `beam_native.cpp`: new static `accumulate_paint_facets(obj, state)` iterates ALL instances × model-part volumes, deserializes EACH volume's `mmu_segmentation_facets` against `v->mesh()` (volume-local), `get_facets(state)`, transforms verts by `inst_m * v->get_matrix()`, merges with index offset. `model_build_paint_overlay`, `model_has_paint`, `model_paint_max_filament` all rewritten to use all volumes.
+- Why it stays aligned: transform is affine so split-midpoints commute; single-volume in-app paint still works because volume[0] triangle order == obj->mesh() order and `inst_m*vol_m*local == obj->mesh()` coords. In-app paint_commit still dumps to volumes[0] (pre-existing multi-volume in-app limitation, NOT made worse).
 
-### Round 1 — G-code parity fixes (user compared mobile vs desktop Benchy/Bunny output)
-1. `Slic3rConfigWrapper.java`: **removed `ironing_type "no ironing" → "top"` inversion** (parse path) — it was force-ENABLING ironing (244 ironing passes, +2h print time). Also removed `crosshatch→grid` coercion (Orca engine understands crosshatch).
-2. Whitelist additions:
-   - PRINT: `only_one_wall_top`, `initial_layer_infill_speed`, `elefant_foot_compensation_layers`, `enable_arc_fitting`, `wall_direction`, `slowdown_for_curled_perimeters`, `xy_hole_compensation`, `default_jerk`, `outer_wall_jerk`, `inner_wall_jerk`, `infill_jerk`, `top_surface_jerk`, `initial_layer_jerk`, `travel_jerk`
-   - FILAMENT: all plate temps (`cool/eng/textured/textured_cool/supertack_plate_temp` + `_initial_layer`), `additional_cooling_fan_speed`, `overhang_fan_threshold`
-   - PRINTER: `enable_filament_ramming`, `curr_bed_type`
-3. `ConfigObject.java` KEY_MIGRATION: added `xy_size_compensation → xy_contour_compensation`.
-4. `IOUtils.mapOrcaConfigKey`: **removed `initial_layer_infill_speed → first_layer_speed_over_raft`** (that legacy key doesn't exist in the Orca engine → value died at config.load).
-5. `beam_native.cpp` (`Java_..._model_1slice`, right after `config.normalize_fdm()`): pin `curr_bed_type` to `btPEI` when unset — **the app's bed temperature setting was dead UI before this** (engine read Cool Plate slots = 35°C instead of user's 55°C).
-6. Result verified on device: Benchy mobile 32m vs desktop 34m50s (was 5h53m vs 3h52m class of error on Bunny). ironing/only_one_wall_top/enable_filament_ramming now match desktop exactly.
+**Files touched (uncommitted)**: `app/src/main/jni/slicebeam/beam_native.cpp`, `app/src/main/java/.../slic3r/Native.java`, `.../slic3r/Model.java`, `.../render/GLRenderer.java`, `.../MainActivity.java`.
 
-### Round 2 — Setup wizard filament selection (user request: like desktop, with select all/deselect all)
-7. `orca_ini_generator.py` rewritten in parts:
-   - PROCESS_KEY_MAP fixed: `initial_layer_infill_speed`→itself, `xy_hole_compensation`→itself (was typo'd `x_size_compensation`), `enable_arc_fitting`→itself; added jerks/wall_direction/only_one_wall_top/slowdown_for_curled_perimeters/elefant_foot_compensation_layers.
-   - PROCESS_VALUE_MAP reduced to only `("support_material_pattern","normal")→"default"`.
-   - MACHINE_KEY_MAP: added `nozzle_diameter`, `min/max_layer_height`, full retraction block (`retraction_length→retract_length`, `z_hop→retract_lift`, `z_hop_types`, `travel_slope`, speeds, wipe, toolchange extras). `MACHINE_COMMA_VECTOR_KEYS` set comma-joins numeric/enum vectors (engine INI needs commas; `;` only for string vectors). Machine-limit keys included.
-   - NEW `FILAMENT_KEY_MAP` + `filament_family_name()` (strips " @Machine") + `vendor_filament_profiles()` (groups ~4000 per-machine variants into per-family sections, prefers exact-family-named base, requires ≥1 instantiated variant).
-   - `main()`: emits real vendor filaments (generics only as fallback), real per-model `default_materials` from `machine_model` entries (variant names mapped → family names), `default_filament_profile` family-stripped.
-   - **Assets regenerated**: `app/src/main/assets/orca_profiles/` — 64 vendors, 7.8MB. Creality has 102 filaments, BBL 206. Regenerate with `cd orcaslicer_mobile_assets && python3 orca_ini_generator.py`.
-8. `SetupActivity.java`:
-   - New fields `filamentsItem`, `enabledFilaments`.
-   - `ProfileItem.ProfileHolderView`: `getList(item)` + `switch(item.type)` now keyed off the BOUND item (was outer-instance field — latent recycling bug).
-   - New `FilamentsItem` page class (after ProfilesItem class): lists filaments of vendors that have an enabled printer, grouped under vendor headers, `ProfileItem(fil, TYPE_FILAMENT)` rows, inner `SelectAllItem` row (Select all / Deselect all buttons), Next button. `refreshIfNeeded()` rebuilds when printer selection changed (guard key = custom-flag + printer titles); also hooked in `onPageScrolled` at `position == PROFILES_INDEX + 1`. Pre-checks `default_materials` of selected printer models.
-   - Inserted into `setItems()` after `profilesItem`.
-   - `FinishItem`: installs `enabledFilaments` (dedup by title); legacy default_materials lookup only runs if `enabledFilaments` empty.
-9. `strings.xml`: `IntroFilamentsHeader`, `IntroFilamentsSelectAll`, `IntroFilamentsDeselectAll`, `IntroFilamentsNone` (English only; ru.po not updated).
-10. `IOUtils.java`: removed BOTH remaining ironing-inversion blocks (in `downloadProfilesRecursively` merge loop and `configJsonToIni` inherited-keys loop).
+## IMMEDIATE NEXT STEP
+User is re-opening the Runescape 3MF on the phone (APK built 22:59 installed). **Overlays build once per model load → file must be fully reopened.** Expect figure AND base painted in the 8 file colors. If good:
+```
+git add -A && git commit -m "Load multi-volume painted 3MF assemblies; adopt project filament colors" && git push
+```
+(Consider bumping a v0.4.1 release.) Note: opening a painted project REPLACES the user's filament palette with the file's colors (same as desktop) — intended.
 
-### Round 3 — .orca_printer import bugs (user report: filaments "missing", selectors greyed out, selection resets)
-Diagnosis (verified):
-- The user's bundle DOES contain 11 filament templates + 1 process; they DO import. The visible bug: `ConfigObject.profileListType` defaults to 0 = `PROFILE_LIST_PRINT`, and `IOUtils.configJsonToIni` never set it → `isSelected()` compares filament/printer titles against the WRONG presets slot → selectors show nothing selected (greyed), and any manual selection appears to vanish on rebind.
-11. **FIX APPLIED**: `IOUtils.configJsonToIni` now sets `cfg.profileListType` from the `type` param ("process"/"filament"/"machine"). Covers both SetupActivity and MainActivity import paths.
-12. `SetupActivity.ensureImportedDefaults`: default filament preset now prefers a title containing "PLA" instead of first-alphabetical (was picking ABS).
-
-### Round 4 — Orca Desktop 3MF project import (verified on device)
-13. `beam_native.cpp`: fixed 3MF geometry loading by passing `LoadStrategy::LoadModel` for `.3mf` files. The old JNI call used only `AddDefaultInstances`; `bbs_3mf.cpp` therefore set `m_load_model = false` and returned an empty model for Orca Desktop project 3MFs (including DRC-backed files like `3DBenchy.3mf`).
-14. `MainActivity.java`: 3MF import now treats `.3mf` as a project load path:
-   - Preserves project object layout (`preserveProjectLayout=true`) instead of auto-centering/autoorienting.
-   - Counts embedded plates from `Metadata/model_settings.config` / `Metadata/plate_*` assets and reports the count in the load snackbar when >1.
-   - Imports separate embedded profile files when present (`Metadata/process_settings_*`, `filament_settings_*`, `machine_settings_*`).
-   - **New fallback**: if Orca stores active profile data only in `Metadata/project_settings.config`, synthesize print/filament/printer `ConfigObject`s from that JSON, import them through the existing whitelist/key-migration path, and activate `print_settings_id`, first `filament_settings_id`, and `printer_settings_id` in `SliceBeam.CONFIG.presets`.
-15. `BedFragment.java`: `loadModel(File, boolean preserveProjectLayout, callback)` supports project-layout-preserving loads and reports added objects.
-16. `FileMenu.java` / `MainActivity.isSupportedModelFile`: file picker/open path allows the formats supported by this Android native `Model::read_from_file()` build: STL, OLTP, OBJ, SVG, DRC, AMF, 3MF, and G-code/BGCode. Desktop-only Apple ModelIO formats and STEP/STP are not supported by this Android `read_from_file()` path yet.
-17. Verification performed on adb device `R5CR60DKJGB`:
-   - Forced rebuild: `./gradlew :app:assembleDebug --rerun-tasks` → `BUILD SUCCESSFUL`, 78 tasks executed.
-   - Installed APK: `app/build/outputs/apk/debug/OrcaSlicerMobile_3b7af24f4a.apk` → `Performing Streamed Install` / `Success`.
-   - Pulled/opened test file: `test_3mf/3DBenchy.3mf` from device `/sdcard/3mf/3DBenchy.3mf`.
-   - Opened via adb VIEW intent from app-private `files/test/3DBenchy.3mf`.
-   - Screenshot `/tmp/orca3mf/benchy_project_relaunch.png` confirmed the teal 3DBenchy model rendered on the bed with no loading spinner/error.
-   - Logcat grep showed no `Failed to load model`, `Failed to import embedded`, `Slic3rRuntimeError`, `FATAL`, or `SIGSEGV`.
-   - Saved config (`files/slic3r.ini`) confirmed active project presets:
-     - `print = process template @Kreality Ender 3 Pro KlipperBlueBoy 0.4 nozzle`
-     - `printer = Kreality Ender 3 Pro KlipperBlueBoy 0.4 nozzle`
-     - `filament = Generic PLA @System`
-   - Imported project settings include `curr_bed_type = High Temp Plate` and a `[filament:Generic PLA @System]` section with PLA/nozzle/bed temps from the project.
-
-## ⚠️ CURRENT STATE / IMMEDIATE NEXT STEP
-
-- 3MF geometry + project-profile import is verified on-device for the user's Orca Desktop `3DBenchy.3mf`.
-- Multi-plate support is currently layout-preserving import + plate count reporting; there is no separate mobile plate selector UI yet.
-- `.orca_printer` `profileListType` fix was also verified by the user earlier in this continuation.
-- NOTHING from this session is committed. Suggested commit after final user approval: `git add -A && git commit -m "Fix profile import and Orca 3MF project loading" && git push origin engine-swap:master`.
-
-## Remaining known gaps / ideas (not started)
-
-- `.orca_printer` import only brings the bundle's own filaments (same as desktop). The big vendor library only appears via the preset wizard path. Could offer the Filaments page after bundle import too.
-- OrcaFilamentLibrary vendor (filament-only, no machines) is skipped by the generator — desktop shows it for all printers.
-- `ru.po` lacks the 4 new Intro strings (falls back to English).
-- APK is 72MB (7.8MB of INI assets). Could trim per-vendor or compress further if it matters.
-- User's already-imported profiles on the phone predate the whitelist fixes — they must **re-import** the .orca_printer/.orca_filament bundles (or re-run setup) to pick up dropped keys (flow ratio 0.98, jerks, initial_layer_infill_speed=105, xy compensation, etc.).
-- NOTHING from this session is committed. `git add -A && git commit` when user confirms testing, then `git push origin engine-swap:master`. Suggested message: "Fix profile import fidelity, add wizard filament selection, real vendor filament library".
-
-## Per-user notes
-
-- Be plain-spoken about git (user is new to it).
-- The user paints models differently on desktop vs mobile, so multicolor G-code diffs are expected to differ in toolpaths — compare CONFIG_BLOCK settings, not raw moves.
-- Earlier session fixed: flush_volumes_matrix N×N rebuild in beam_native.cpp, MultiMaterialSegmentation static-init wall-paint bug (thresholds computed per-call now), machine_max_feedrate_* KEY_MIGRATION entries, retraction-group whitelist, README rewrite, GitHub publish + v0.1.0 release.
+## Gotchas / scratch
+- Leftover untracked debris (safe to delete): `BedFragment.java.orig/.rej`, `patch.diff`, `logcat_filtered*.txt`.
+- `EnforcerBlockerType`: NONE=0, Extruder1=1 … Extruder16=ExtruderMax=16. `paint_state(filamentIdx)` maps f→Extruder f; base/unpainted = NONE (rendered by normal model render with palette[0]).
+- Architecture cheat-sheet from prior session (key migration, import whitelists, curr_bed_type=btPEI bed-temp fix, wizard filament page, regenerated 64-vendor INIs) is in git history; profile-import fidelity work already shipped earlier.

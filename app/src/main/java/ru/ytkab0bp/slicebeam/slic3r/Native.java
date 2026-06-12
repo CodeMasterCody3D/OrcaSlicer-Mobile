@@ -226,6 +226,7 @@ public class Native {
     static native void paint_end(long sessionPtr);
     static native int model_build_paint_overlay(long modelPtr, int objIdx, long glPtr, int filamentIdx);
     static native boolean model_has_paint(long modelPtr, int objIdx);
+    static native int model_paint_max_filament(long modelPtr, int objIdx);
 
     static native long model_slice(long ptr, String configPath, String path, SliceListener listener, int numFilaments, int[] filamentColors, int calibMode, double calibStart, double calibEnd, double calibStep) throws Slic3rRuntimeError;
     static native void model_export_3mf(long ptr, String configPath, String path) throws Slic3rRuntimeError;
