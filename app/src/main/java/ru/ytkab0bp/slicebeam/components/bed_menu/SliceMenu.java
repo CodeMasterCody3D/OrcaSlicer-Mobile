@@ -122,25 +122,7 @@ public class SliceMenu extends ListBedMenu {
                                 viewer.setInfillVisibilityDepth(isChecked ? 5 : -1);
                                 fragment.getGlView().requestRender();
                             }
-                        }, Prefs.isPerformanceModeEnabled()),
-                new BedMenuItem(R.string.MenuSliceFilamentView, R.drawable.slot_filament_28)
-                        .setTitleTextSize(8f)
-                        .setCheckable((buttonView, isChecked) -> fragment.getGlView().queueEvent(() -> {
-                            GCodeViewer viewer = fragment.getGlView().getRenderer().getViewer();
-                            if (viewer != null) {
-                                if (isChecked) {
-                                    int[] pal = Prefs.getFilamentPalette();
-                                    int[] rgb = new int[pal.length];
-                                    for (int i = 0; i < pal.length; i++) rgb[i] = pal[i] & 0xFFFFFF;
-                                    viewer.setToolColors(rgb);
-                                    viewer.setViewType(GCodeViewer.VIEW_TYPE_TOOL);
-                                } else {
-                                    viewer.setViewType(GCodeViewer.VIEW_TYPE_FEATURE);
-                                }
-                                fragment.getGlView().requestRender();
-                                ViewUtils.postOnMainThread(() -> adapter.notifyDataSetChanged());
-                            }
-                        }), isFilamentViewChecked())
+                        }, Prefs.isPerformanceModeEnabled())
         ));
         ConfigObject obj = SliceBeam.CONFIG.findPrinter(SliceBeam.CONFIG.presets.get("printer"));
         assertTrue(obj != null);
@@ -772,13 +754,5 @@ public class SliceMenu extends ListBedMenu {
             fromTrack.stopScroll();
             toTrack.stopScroll();
         }
-    }
-
-    private boolean isFilamentViewChecked() {
-        GCodeViewer viewer = fragment.getGlView().getRenderer().getViewer();
-        if (viewer != null) {
-            return viewer.getViewType() == GCodeViewer.VIEW_TYPE_TOOL;
-        }
-        return fragment.getGlView().getRenderer().isModelMultiColor();
     }
 }

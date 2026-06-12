@@ -368,14 +368,32 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         return true;
     }
 
+    private void initViewer() {
+        if (gcodeResult == null) return;
+        viewer = new GCodeViewer();
+        viewer.initGL();
+        viewer.setThemeColors();
+        viewer.load(gcodeResult);
+        if (isModelMultiColor()) {
+            int[] pal = ru.ytkab0bp.slicebeam.utils.Prefs.getFilamentPalette();
+            int[] rgb = new int[pal.length];
+            for (int i = 0; i < pal.length; i++) rgb[i] = pal[i] & 0xFFFFFF;
+            viewer.setToolColors(rgb);
+            viewer.setViewType(GCodeViewer.VIEW_TYPE_TOOL);
+        } else {
+            viewer.setViewType(GCodeViewer.VIEW_TYPE_FEATURE);
+        }
+    }
+
     public void setGCodeViewer(GCodeProcessorResult result) {
         this.isViewerEnabled = result != null;
-        this.gcodeResult = result;
-
-        if (!isViewerEnabled && viewer != null) {
-            viewer.release();
-            viewer = null;
+        if (result != this.gcodeResult) {
+            if (viewer != null) {
+                viewer.release();
+                viewer = null;
+            }
         }
+        this.gcodeResult = result;
     }
 
     public GLRenderer(GLView glView) {
@@ -597,22 +615,12 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
         if (isViewerEnabled) {
             if (viewer == null) {
-                viewer = new GCodeViewer();
-                viewer.initGL();
-                viewer.setThemeColors();
-                if (isModelMultiColor()) {
-                    int[] pal = ru.ytkab0bp.slicebeam.utils.Prefs.getFilamentPalette();
-                    int[] rgb = new int[pal.length];
-                    for (int i = 0; i < pal.length; i++) rgb[i] = pal[i] & 0xFFFFFF;
-                    viewer.setToolColors(rgb);
-                    viewer.setViewType(GCodeViewer.VIEW_TYPE_TOOL);
-                } else {
-                    viewer.setViewType(GCodeViewer.VIEW_TYPE_FEATURE);
-                }
-                viewer.load(gcodeResult);
+                initViewer();
             }
 
-            viewer.render(viewMatrix, projectionMatrix);
+            if (viewer != null) {
+                viewer.render(viewMatrix, projectionMatrix);
+            }
         }
         // Models on inactive plates: plain dimmed render, no selection/paint/gizmo handling.
         if (viewer == null && !isViewerEnabled && !inactivePlateModels.isEmpty()) {
@@ -1778,10 +1786,7 @@ public class GLRenderer implements GLSurfaceView.Renderer {
             cameraIsDirty = false;
         }
         if (isViewerEnabled) {
-            viewer = new GCodeViewer();
-            viewer.initGL();
-            viewer.setThemeColors();
-            viewer.load(gcodeResult);
+            initViewer();
         }
     }
 
