@@ -218,6 +218,7 @@ public class Native {
     static native void model_apply_adaptive_layer_height(long ptr, int i, String configPath, float qualityFactor);
     static native void model_clear_adaptive_layer_height(long ptr, int i);
     static native boolean model_has_adaptive_layer_height(long ptr, int i);
+    static native void model_emboss_text(long ptr, int i, String fontPath, String text, float size, float depth, int type, double px, double py, double pz, double nx, double ny, double nz);
     // ---- Multi-color painting (mmu segmentation) ----
     static native long paint_begin(long modelPtr, int objIdx, int mode);
     static native double[] paint_raycast(long sessionPtr, double[] origin, double[] dir);

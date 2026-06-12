@@ -115,7 +115,7 @@ public class TransformMenu extends ListBedMenu {
         items.add(paintButton(R.string.MenuToolbarColorPaint, ru.ytkab0bp.slicebeam.render.GLRenderer.PAINT_MODE_COLOR));
 
         // --- Misc ---
-        items.add(notImplemented(R.string.MenuToolbarEmboss, R.drawable.edit_outline_28));
+        items.add(selection(new BedMenuItem(R.string.MenuToolbarEmboss, R.drawable.edit_outline_28).onClick(v -> fragment.enterEmbossMode())));
         items.add(new BedMenuItem(R.string.MenuToolbarMeasure, R.drawable.wrench_outline_28).onClick(v -> {
             fragment.enterMeasureMode();
         }));

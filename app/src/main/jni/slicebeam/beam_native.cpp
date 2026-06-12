@@ -10,6 +10,7 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Slicing.hpp"
+#include "libslic3r/Emboss.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/ModelArrange.hpp"
 #include <libslic3r/SVG.hpp>
@@ -1040,6 +1041,56 @@ extern "C" {
             return !model->model.objects[i]->layer_height_profile.empty();
         }
         return false;
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1emboss_1text(
+        JNIEnv* env, jclass, jlong ptr, jint i, jstring fontPath, jstring textStr, jfloat size, jfloat depth, jint type,
+        jdouble px, jdouble py, jdouble pz, jdouble nx, jdouble ny, jdouble nz) {
+        try {
+            ModelRef* model = (ModelRef*) (intptr_t) ptr;
+            if (i < 0 || i >= (int) model->model.objects.size()) return;
+            ModelObject* obj = model->model.objects[i];
+
+            const char *font_path_chars = env->GetStringUTFChars(fontPath, JNI_FALSE);
+            std::string font_path(font_path_chars);
+            env->ReleaseStringUTFChars(fontPath, font_path_chars);
+
+            const char *text_chars = env->GetStringUTFChars(textStr, JNI_FALSE);
+            std::string text(text_chars);
+            env->ReleaseStringUTFChars(textStr, text_chars);
+
+            // 1) Load font
+            std::unique_ptr<Emboss::FontFile> font_file = Emboss::create_font_file(font_path.c_str());
+            if (!font_file) {
+                env->ThrowNew(env->FindClass("java/lang/RuntimeException"), "Failed to load font file");
+                return;
+            }
+            Emboss::FontFileWithCache font_with_cache(std::move(font_file));
+
+            // 2) Generate 2D shapes
+            FontProp font_prop(size);
+            HealedExPolygons healed_shapes = Emboss::text2shapes(font_with_cache, text.c_str(), font_prop);
+            if (healed_shapes.expolygons.empty()) {
+                env->ThrowNew(env->FindClass("java/lang/RuntimeException"), "Generated text shape is empty");
+                return;
+            }
+
+            // 3) Create transformation and projection onto surface
+            Vec3d position(px, py, pz);
+            Vec3d normal(nx, ny, nz);
+            Transform3d matrix = Emboss::create_transformation_onto_surface(position, normal);
+            Emboss::OrthoProject projection(matrix, normal * depth);
+
+            // 4) Convert to 3D model (indexed_triangle_set)
+            indexed_triangle_set its = Emboss::polygons2model(healed_shapes.expolygons, projection);
+
+            // 5) Add volume to model object
+            TriangleMesh mesh(std::move(its));
+            ModelVolumeType vol_type = static_cast<ModelVolumeType>(type);
+            obj->add_volume(std::move(mesh), vol_type, true);
+        } catch (const std::exception& e) {
+            env->ThrowNew(env->FindClass("java/lang/RuntimeException"), e.what());
+        }
     }
 
     JNIEXPORT jlong JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_model_1slice(JNIEnv* env, jclass, jlong ptr, jstring configPath, jstring path, jobject listener, jint numFilaments, jintArray colorsArr, jint calibMode, jdouble calibStart, jdouble calibEnd, jdouble calibStep) {

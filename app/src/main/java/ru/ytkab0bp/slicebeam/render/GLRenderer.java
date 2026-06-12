@@ -104,6 +104,7 @@ public class GLRenderer implements GLSurfaceView.Renderer {
     private boolean isInFlattenMode;
     private ArrayList<GLModel> flattenPlanes = new ArrayList<>();
     private boolean isInMeasureMode = false;
+    private boolean isInEmbossMode = false;
     private Vec3d measurePointA = null;
     private Vec3d measurePointB = null;
     private GLModel measurePointModel = null;
@@ -412,6 +413,14 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
     public synchronized boolean isInMeasureMode() {
         return isInMeasureMode;
+    }
+
+    public synchronized void setInEmbossMode(boolean enabled) {
+        this.isInEmbossMode = enabled;
+    }
+
+    public synchronized boolean isInEmbossMode() {
+        return isInEmbossMode;
     }
 
     public synchronized void clearMeasurePoints() {
@@ -1564,6 +1573,24 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
     public boolean onClick(float x, float y) {
         if (model == null || isViewerEnabled) return false;
+
+        if (isInEmbossMode) {
+            int targetObj = selectedObject;
+            if (targetObj == -1) {
+                targetObj = raycastObjectIndex(x, y);
+            }
+            if (targetObj != -1 && targetObj < glModels.size()) {
+                GLModel glModel = glModels.get(targetObj);
+                glModel.getRaycaster().raycast(this, raycastHits, x, y);
+                if (!raycastHits.isEmpty()) {
+                    Vec3d position = raycastHits.get(0).position;
+                    Vec3d normal = raycastHits.get(0).normal;
+                    SliceBeam.EVENT_BUS.fireEvent(new ru.ytkab0bp.slicebeam.events.EmbossSurfaceClickedEvent(position, normal));
+                    return true;
+                }
+            }
+            return false;
+        }
 
         if (isInMeasureMode) {
             int targetObj = selectedObject;

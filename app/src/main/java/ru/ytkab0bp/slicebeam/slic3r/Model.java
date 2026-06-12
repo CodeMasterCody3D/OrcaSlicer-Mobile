@@ -209,6 +209,10 @@ public class Model {
         return Native.model_has_adaptive_layer_height(pointer, i);
     }
 
+    public void embossText(int i, String fontPath, String text, float size, float depth, int type, Vec3d position, Vec3d normal) {
+        Native.model_emboss_text(pointer, i, fontPath, text, size, depth, type, position.x, position.y, position.z, normal.x, normal.y, normal.z);
+    }
+
     /** True if object i has any committed multi-color painting. */
     public boolean hasPaint(int i) {
         return Native.model_has_paint(pointer, i);

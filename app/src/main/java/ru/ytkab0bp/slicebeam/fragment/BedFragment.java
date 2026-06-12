@@ -125,6 +125,7 @@ public class BedFragment extends Fragment {
     private ru.ytkab0bp.slicebeam.view.PaintModeView paintModeView;
     private ru.ytkab0bp.slicebeam.view.MeasureModeView measureModeView;
     private ru.ytkab0bp.slicebeam.view.VariableLayerHeightModeView variableLayerHeightModeView;
+    private ru.ytkab0bp.slicebeam.view.EmbossModeView embossModeView;
 
     private BedSwipeDownLayout swipeDownLayout;
     private boolean hasWebError;
@@ -378,6 +379,32 @@ public class BedFragment extends Fragment {
         return variableLayerHeightModeView != null;
     }
 
+    public void enterEmbossMode() {
+        Context ctx = getContext();
+        if (ctx == null || glView == null || embossModeView != null) return;
+        glView.queueEvent(() -> {
+            glView.getRenderer().setInEmbossMode(true);
+            glView.requestRender();
+        });
+        embossModeView = new ru.ytkab0bp.slicebeam.view.EmbossModeView(ctx, glView, this::exitEmbossMode);
+        overlayLayout.addView(embossModeView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void exitEmbossMode() {
+        if (embossModeView != null) {
+            glView.queueEvent(() -> {
+                glView.getRenderer().setInEmbossMode(false);
+                glView.requestRender();
+            });
+            overlayLayout.removeView(embossModeView);
+            embossModeView = null;
+        }
+    }
+
+    public boolean isEmbossMode() {
+        return embossModeView != null;
+    }
+
     public void loadGCode(File f) {
         gCodeResult = new GCodeProcessorResult(f);
         ViewUtils.postOnMainThread(()-> {
@@ -401,6 +428,10 @@ public class BedFragment extends Fragment {
 
     @Override
     public boolean onBackPressed() {
+        if (embossModeView != null) {
+            exitEmbossMode();
+            return true;
+        }
         if (variableLayerHeightModeView != null) {
             exitVariableLayerHeightMode();
             return true;
