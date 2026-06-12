@@ -67,6 +67,14 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
     private Model model;
 
+    // Inactive plates of a multi-plate project. Each Model is bed-local; offsets are the plate's
+    // grid position relative to the active plate (which always renders at the origin). Models are
+    // owned by BedFragment; only the GLModels here are owned by the renderer.
+    private final List<Model> inactivePlateModels = new ArrayList<>();
+    private final List<List<GLModel>> inactivePlateGlModels = new ArrayList<>();
+    private final List<double[]> inactivePlateOffsets = new ArrayList<>();
+    private final double[] plateViewMatrix = new double[16];
+
     private GCodeProcessorResult gcodeResult;
     private GCodeViewer viewer;
     private boolean isViewerEnabled;
@@ -344,6 +352,26 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         }
     }
 
+    /**
+     * Replace the set of inactive plates shown around the active one. Must be called on the
+     * GL thread. Pass empty lists (or null) to clear. GLModels are built lazily during draw.
+     */
+    public void setInactivePlates(List<Model> models, List<double[]> offsets) {
+        for (List<GLModel> list : inactivePlateGlModels) {
+            for (GLModel gm : list) gm.release();
+        }
+        inactivePlateGlModels.clear();
+        inactivePlateModels.clear();
+        inactivePlateOffsets.clear();
+        if (models == null || offsets == null) return;
+        for (int p = 0; p < models.size() && p < offsets.size(); p++) {
+            if (models.get(p) == null) continue;
+            inactivePlateModels.add(models.get(p));
+            inactivePlateOffsets.add(offsets.get(p));
+            inactivePlateGlModels.add(new ArrayList<>());
+        }
+    }
+
     public boolean invalidateFlattenMode() {
         if (isInFlattenMode) {
             setInFlattenMode(true);
@@ -403,6 +431,15 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         }
         if (bed.isValid()) {
             bed.render(shadersManager, bottom, viewMatrix, projectionMatrix, 1f / camera.getZoom());
+            // Multi-plate grid: draw the other plates' beds at their offsets (edit mode only).
+            if (viewer == null && !isViewerEnabled) {
+                for (int p = 0; p < inactivePlateOffsets.size(); p++) {
+                    double[] off = inactivePlateOffsets.get(p);
+                    System.arraycopy(viewMatrix, 0, plateViewMatrix, 0, 16);
+                    DoubleMatrix.translateM(plateViewMatrix, 0, off[0], off[1], 0);
+                    bed.render(shadersManager, bottom, plateViewMatrix, projectionMatrix, 1f / camera.getZoom(), false);
+                }
+            }
         }
 
         if (isViewerEnabled) {
@@ -415,6 +452,42 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
             viewer.render(viewMatrix, projectionMatrix);
         }
+        // Models on inactive plates: plain dimmed render, no selection/paint/gizmo handling.
+        if (viewer == null && !isViewerEnabled && !inactivePlateModels.isEmpty()) {
+            shader = shadersManager.get(GLShadersManager.SHADER_GOURAUD_LIGHT);
+            shader.startUsing();
+            shader.setUniform("emission_factor", 0.05f);
+            shader.setUniformMatrix4fv("projection_matrix", projectionMatrix);
+            int[] palette = paintMode ? paintPalette : Prefs.getFilamentPalette();
+            int inactiveColor = ColorUtils.blendARGB(palette.length > 0 ? palette[0] : cachedAccentColor, Color.GRAY, 0.45f);
+            for (int p = 0; p < inactivePlateModels.size(); p++) {
+                Model m = inactivePlateModels.get(p);
+                double[] off = inactivePlateOffsets.get(p);
+                List<GLModel> list = inactivePlateGlModels.get(p);
+                System.arraycopy(viewMatrix, 0, plateViewMatrix, 0, 16);
+                DoubleMatrix.translateM(plateViewMatrix, 0, off[0], off[1], 0);
+                shader.setUniformMatrix4fv("view_model_matrix", plateViewMatrix);
+                DoubleMatrix.setIdentityM(modelMatrix, 0);
+                Slic3rUtils.calcViewNormalMatrix(plateViewMatrix, modelMatrix, normalMatrix);
+                shader.setUniformMatrix3fv("view_normal_matrix", normalMatrix);
+                for (int i = 0; i < m.getObjectsCount(); i++) {
+                    boolean left = m.isLeftHanded(i);
+                    if (left) glFrontFace(GL_CW);
+                    shader.setUniform("volume_mirrored", left);
+                    while (list.size() <= i) {
+                        GLModel gm = new GLModel();
+                        gm.initFrom(m, list.size());
+                        list.add(gm);
+                    }
+                    GLModel gm = list.get(i);
+                    gm.setColor(inactiveColor);
+                    gm.render();
+                    if (left) glFrontFace(GL_CCW);
+                }
+            }
+            shader.stopUsing();
+        }
+
         if (viewer == null && model != null) {
             shader = shadersManager.get(GLShadersManager.SHADER_GOURAUD_LIGHT);
             shader.startUsing();

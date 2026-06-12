@@ -867,6 +867,93 @@ public class BedFragment extends Fragment {
         popup.show();
     }
 
+    /** Desktop OrcaSlicer plate grid column count (PartPlateList::compute_colum_count). */
+    private static int computePlateCols(int count) {
+        float value = (float) Math.sqrt(count);
+        float round = Math.round(value);
+        return value > round ? (int) round + 1 : (int) round;
+    }
+
+    /**
+     * Plate origin in project world space, matching desktop PartPlateList::compute_origin:
+     * stride = bed size * (1 + LOGICAL_PART_PLATE_GAP=1/5), columns extend +X, rows extend -Y.
+     */
+    private static void computePlateOrigin(int index, int cols, double bedWidth, double bedDepth, double[] out) {
+        out[0] = (index % cols) * bedWidth * 1.2;
+        out[1] = -(index / cols) * bedDepth * 1.2;
+    }
+
+    private static void computePlateOrigin(int index, int cols, Vec3d bedMin, Vec3d bedMax, double[] out) {
+        computePlateOrigin(index, cols, bedMax.x - bedMin.x, bedMax.y - bedMin.y, out);
+    }
+
+    /**
+     * Bed size the project file was laid out for, from its embedded printable_area. The world
+     * offsets of objects on plate 2+ are multiples of THIS bed's stride — which may differ from
+     * the app's configured bed. Returns true and fills out[0]=width, out[1]=depth on success.
+     */
+    private static boolean readProjectBedSize(File f, double[] out) {
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(f)) {
+            java.util.zip.ZipEntry en = zip.getEntry("Metadata/project_settings.config");
+            if (en == null) return false;
+            org.json.JSONObject cfg = new org.json.JSONObject(
+                    ru.ytkab0bp.slicebeam.utils.IOUtils.readString(zip.getInputStream(en), true));
+            org.json.JSONArray area = cfg.optJSONArray("printable_area");
+            if (area == null || area.length() == 0) return false;
+            double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE;
+            double minY = Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
+            for (int i = 0; i < area.length(); i++) {
+                String[] pt = area.getString(i).split("x");
+                if (pt.length != 2) return false;
+                double x = Double.parseDouble(pt[0]), y = Double.parseDouble(pt[1]);
+                minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+            }
+            if (maxX <= minX || maxY <= minY) return false;
+            out[0] = maxX - minX;
+            out[1] = maxY - minY;
+            return true;
+        } catch (Exception e) {
+            android.util.Log.w("BedFragment", "Could not read project bed size", e);
+            return false;
+        }
+    }
+
+    /**
+     * Hand the renderer every plate except the active one, with grid offsets relative to the
+     * active plate (which always renders at the origin), so all plates are visible at once.
+     */
+    private void pushPlatesToRenderer() {
+        final int active = currentPlateIndex;
+        final java.util.List<Model> models = new java.util.ArrayList<>(platesModels);
+        glView.queueEvent(new Runnable() {
+            @Override
+            public void run() {
+                Bed3D bed = glView.getRenderer().getBed();
+                if (bed == null) {
+                    ViewUtils.postOnMainThread(() -> glView.queueEvent(this));
+                    return;
+                }
+                java.util.List<Model> inactive = new java.util.ArrayList<>();
+                java.util.List<double[]> offsets = new java.util.ArrayList<>();
+                if (models.size() > 1) {
+                    int cols = computePlateCols(models.size());
+                    double[] activeOrigin = new double[2];
+                    double[] tmp = new double[2];
+                    computePlateOrigin(active, cols, bed.getVolumeMin(), bed.getVolumeMax(), activeOrigin);
+                    for (int i = 0; i < models.size(); i++) {
+                        if (i == active || models.get(i) == null) continue;
+                        computePlateOrigin(i, cols, bed.getVolumeMin(), bed.getVolumeMax(), tmp);
+                        inactive.add(models.get(i));
+                        offsets.add(new double[]{tmp[0] - activeOrigin[0], tmp[1] - activeOrigin[1]});
+                    }
+                }
+                glView.getRenderer().setInactivePlates(inactive, offsets);
+                glView.requestRender();
+            }
+        });
+    }
+
     private void switchPlate(int newPlateIndex) {
         switchPlate(newPlateIndex, true, null);
     }
@@ -899,6 +986,7 @@ public class BedFragment extends Fragment {
                 };
                 loadModelInternal(currentProjectFile, true, internalCallback);
                 android.util.Log.d("BedFragment", "loadModelInternal returned");
+                pushPlatesToRenderer();
                 return; // loadModelInternal handles setModel and render
             } catch (Slic3rRuntimeError e) {
                 android.util.Log.e("BedFragment", "Failed to lazy load plate", e);
@@ -926,6 +1014,7 @@ public class BedFragment extends Fragment {
             glView.getRenderer().setModel(finalNext);
             glView.requestRender();
         });
+        pushPlatesToRenderer();
     }
 
     private void updatePlateIndicator() {
@@ -955,7 +1044,54 @@ public class BedFragment extends Fragment {
                 platesModels.add(null);
             }
             this.currentPlateIndex = 0;
-            switchPlate(0, false, callback);
+
+            // Eagerly load every plate. The 3MF stores objects at desktop's world coordinates
+            // (plate i offset by its grid origin), so normalize each plate back to bed-local
+            // coordinates; the renderer then draws inactive plates at their grid offsets.
+            // The stride must come from the bed size the FILE was laid out for, not the app's.
+            final int cols = computePlateCols(plateCount);
+            final double[] fileBed = new double[2];
+            final boolean haveFileBed = readProjectBedSize(f, fileBed);
+            for (int i = 0; i < plateCount; i++) {
+                try {
+                    platesModels.set(i, new Model(f, i + 1));
+                } catch (Exception e) {
+                    android.util.Log.e("BedFragment", "Failed to load plate " + (i + 1), e);
+                    platesModels.set(i, new Model());
+                }
+            }
+            final ModelLoadCallback finalCallback = callback;
+            glView.queueEvent(new Runnable() {
+                @Override
+                public void run() {
+                    Bed3D bed = glView.getRenderer().getBed();
+                    if (bed == null) {
+                        ViewUtils.postOnMainThread(() -> glView.queueEvent(this));
+                        return;
+                    }
+                    double bedW = haveFileBed ? fileBed[0] : bed.getVolumeMax().x - bed.getVolumeMin().x;
+                    double bedD = haveFileBed ? fileBed[1] : bed.getVolumeMax().y - bed.getVolumeMin().y;
+                    double[] origin = new double[2];
+                    for (int i = 0; i < platesModels.size(); i++) {
+                        Model m = platesModels.get(i);
+                        if (m == null) continue;
+                        computePlateOrigin(i, cols, bedW, bedD, origin);
+                        if (origin[0] != 0 || origin[1] != 0) {
+                            for (int o = 0; o < m.getObjectsCount(); o++) {
+                                m.translate(o, -origin[0], -origin[1], 0);
+                            }
+                        }
+                        m.resetBoundingBox();
+                    }
+                    Model first = platesModels.get(0);
+                    glView.getRenderer().setModel(first);
+                    glView.getRenderer().resetGlModels();
+                    if (finalCallback != null) {
+                        finalCallback.onLoaded(first, 0, first != null ? first.getObjectsCount() : 0);
+                    }
+                }
+            });
+            pushPlatesToRenderer();
         } else {
             // Loading an STL or 1-plate 3MF. Just load into current plate.
             if (platesModels.isEmpty()) {
