@@ -374,6 +374,9 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         viewer.initGL();
         viewer.setThemeColors();
         viewer.load(gcodeResult);
+        if (!viewer.isOptionVisible(GCodeViewer.OPTION_TYPE_SEAMS)) {
+            viewer.toggleOptionVisibility(GCodeViewer.OPTION_TYPE_SEAMS);
+        }
         if (isModelMultiColor()) {
             int[] pal = ru.ytkab0bp.slicebeam.utils.Prefs.getFilamentPalette();
             int[] rgb = new int[pal.length];
