@@ -84,7 +84,7 @@ public class SliceMenu extends ListBedMenu {
     protected List<SimpleRecyclerItem> onCreateItems(boolean portrait) {
         lastUid = SliceBeam.CONFIG_UID;
         List<SimpleRecyclerItem> items = new ArrayList<>(Arrays.asList(
-                new BedMenuItem(R.string.MenuSliceInfo, R.drawable.clock_circle_dashed_outline_24).onClick(v -> fragment.showUnfoldMenu(new InfoMenu(), v)),
+                new BedMenuItem(R.string.MenuSliceInfo, R.drawable.clock_circle_dashed_outline_24).onClick(v -> fragment.showUnfoldMenu(new InfoMenu(this), v)),
                 new BedMenuItem(R.string.MenuSliceLayers, R.drawable.square_stack_up_outline_28).onClick(v -> fragment.showUnfoldMenu(new LayersMenu(), v)),
                 new BedMenuItem(R.string.MenuSliceExportToFile, R.drawable.folder_simple_arrow_right_outline_28).onClick(v -> {
                     if (fragment.getContext() instanceof Activity) {
@@ -138,8 +138,9 @@ public class SliceMenu extends ListBedMenu {
                                     viewer.setViewType(GCodeViewer.VIEW_TYPE_FEATURE);
                                 }
                                 fragment.getGlView().requestRender();
+                                ViewUtils.postOnMainThread(() -> adapter.notifyDataSetChanged());
                             }
-                        }), false)
+                        }), isFilamentViewChecked())
         ));
         ConfigObject obj = SliceBeam.CONFIG.findPrinter(SliceBeam.CONFIG.presets.get("printer"));
         assertTrue(obj != null);
@@ -221,10 +222,44 @@ public class SliceMenu extends ListBedMenu {
     }
 
     private final static class InfoMenu extends UnfoldMenu implements IThemeView {
+        private final static String[] SCHEME_NAMES = {
+            "Line type",
+            "Layer height",
+            "Line width",
+            "Speed",
+            "Actual speed",
+            "Fan speed",
+            "Temperature",
+            "Flow",
+            "Actual flow",
+            "Layer time",
+            "Layer time log",
+            "Filament"
+        };
+        private final static int[] SCHEME_VALUES = {
+            GCodeViewer.VIEW_TYPE_FEATURE,
+            1, // Height
+            2, // Width
+            3, // Speed
+            4, // ActualSpeed
+            5, // FanSpeed
+            6, // Temperature
+            7, // VolumetricFlowRate
+            8, // ActualVolumetricFlowRate
+            9, // LayerTimeLinear
+            10, // LayerTimeLogarithmic
+            GCodeViewer.VIEW_TYPE_TOOL
+        };
+
         private TextView totalView;
         private SegmentsView segmentsView;
         private ExtrusionRoleView[] roleViews = new ExtrusionRoleView[GCodeViewer.EXTRUSION_ROLES_COUNT];
         private static DecimalFormat format = new DecimalFormat("0.##");
+
+        private final SliceMenu parent;
+        public InfoMenu(SliceMenu parent) {
+            this.parent = parent;
+        }
 
         private GCodeViewer getViewer() {
             return fragment.getGlView().getRenderer().getViewer();
@@ -238,6 +273,75 @@ public class SliceMenu extends ListBedMenu {
         protected View onCreateView(Context ctx, boolean portrait) {
             LinearLayout ll = new LinearLayout(ctx);
             ll.setOrientation(LinearLayout.VERTICAL);
+
+            LinearLayout schemeRow = new LinearLayout(ctx);
+            schemeRow.setOrientation(LinearLayout.HORIZONTAL);
+            schemeRow.setGravity(Gravity.CENTER_VERTICAL);
+            schemeRow.setPadding(ViewUtils.dp(16), ViewUtils.dp(12), ViewUtils.dp(16), ViewUtils.dp(12));
+            schemeRow.setBackground(ViewUtils.createRipple(ThemesRepo.getColor(android.R.attr.colorControlHighlight), 0));
+            
+            TextView schemeLabel = new TextView(ctx);
+            schemeLabel.setText("Color scheme");
+            schemeLabel.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+            schemeLabel.setTextColor(ThemesRepo.getColor(android.R.attr.textColorSecondary));
+            schemeRow.addView(schemeLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            
+            TextView schemeValue = new TextView(ctx);
+            schemeValue.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
+            schemeValue.setTextColor(ThemesRepo.getColor(android.R.attr.textColorPrimary));
+            schemeValue.setGravity(Gravity.END);
+            
+            GCodeViewer viewer = getViewer();
+            int currentType = viewer != null ? viewer.getViewType() : GCodeViewer.VIEW_TYPE_FEATURE;
+            String initialName = "Line type";
+            for (int i = 0; i < SCHEME_VALUES.length; i++) {
+                if (SCHEME_VALUES[i] == currentType) {
+                    initialName = SCHEME_NAMES[i];
+                    break;
+                }
+            }
+            schemeValue.setText(initialName);
+            schemeRow.addView(schemeValue, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            
+            schemeRow.setOnClickListener(v -> {
+                GCodeViewer vViewer = getViewer();
+                if (vViewer == null) return;
+                
+                int cType = vViewer.getViewType();
+                int selectedIndex = 0;
+                for (int i = 0; i < SCHEME_VALUES.length; i++) {
+                    if (SCHEME_VALUES[i] == cType) {
+                        selectedIndex = i;
+                        break;
+                    }
+                }
+                
+                new BeamAlertDialogBuilder(ctx)
+                    .setTitle("Color scheme")
+                    .setSingleChoiceItems(SCHEME_NAMES, selectedIndex, (dialog, which) -> {
+                        int type = SCHEME_VALUES[which];
+                        schemeValue.setText(SCHEME_NAMES[which]);
+                        fragment.getGlView().queueEvent(() -> {
+                            GCodeViewer glViewer = getViewer();
+                            if (glViewer != null) {
+                                if (type == GCodeViewer.VIEW_TYPE_TOOL) {
+                                    int[] pal = Prefs.getFilamentPalette();
+                                    int[] rgb = new int[pal.length];
+                                    for (int i = 0; i < pal.length; i++) rgb[i] = pal[i] & 0xFFFFFF;
+                                    glViewer.setToolColors(rgb);
+                                }
+                                glViewer.setViewType(type);
+                                fragment.getGlView().requestRender();
+                                ViewUtils.postOnMainThread(() -> parent.adapter.notifyDataSetChanged());
+                            }
+                        });
+                        dialog.dismiss();
+                    })
+                    .show();
+            });
+            
+            ll.addView(schemeRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            ll.addView(new DividerView(ctx), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewUtils.dp(1f)));
 
             ll.addView(new Space(ctx), new LinearLayout.LayoutParams(0, 0, 1f));
 
@@ -324,7 +428,7 @@ public class SliceMenu extends ListBedMenu {
                             visibleCount++;
                         }
                     }
-                    return ViewUtils.dp(42) * visibleCount + ViewUtils.dp(28) + ViewUtils.dp(52) + ViewUtils.dp(18 + 8);
+                    return ViewUtils.dp(42) * visibleCount + ViewUtils.dp(28) + ViewUtils.dp(52) + ViewUtils.dp(18 + 8) + ViewUtils.dp(44);
                 }
             }
             return super.getRequestedSize(into, portrait);
@@ -668,5 +772,13 @@ public class SliceMenu extends ListBedMenu {
             fromTrack.stopScroll();
             toTrack.stopScroll();
         }
+    }
+
+    private boolean isFilamentViewChecked() {
+        GCodeViewer viewer = fragment.getGlView().getRenderer().getViewer();
+        if (viewer != null) {
+            return viewer.getViewType() == GCodeViewer.VIEW_TYPE_TOOL;
+        }
+        return fragment.getGlView().getRenderer().isModelMultiColor();
     }
 }

@@ -274,7 +274,7 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         return "1".equals(v) || "true".equals(v) || "yes".equals(v) || "on".equals(v);
     }
 
-    private boolean isModelMultiColor() {
+    public boolean isModelMultiColor() {
         if (model == null || model.getPointer() == 0 || model.getObjectsCount() == 0) return false;
         boolean hasPaint = false;
         java.util.Set<Integer> activeExtruders = new java.util.HashSet<>();
@@ -600,6 +600,15 @@ public class GLRenderer implements GLSurfaceView.Renderer {
                 viewer = new GCodeViewer();
                 viewer.initGL();
                 viewer.setThemeColors();
+                if (isModelMultiColor()) {
+                    int[] pal = ru.ytkab0bp.slicebeam.utils.Prefs.getFilamentPalette();
+                    int[] rgb = new int[pal.length];
+                    for (int i = 0; i < pal.length; i++) rgb[i] = pal[i] & 0xFFFFFF;
+                    viewer.setToolColors(rgb);
+                    viewer.setViewType(GCodeViewer.VIEW_TYPE_TOOL);
+                } else {
+                    viewer.setViewType(GCodeViewer.VIEW_TYPE_FEATURE);
+                }
                 viewer.load(gcodeResult);
             }
 
