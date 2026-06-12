@@ -948,6 +948,7 @@ public class BedFragment extends Fragment {
                         offsets.add(new double[]{tmp[0] - activeOrigin[0], tmp[1] - activeOrigin[1]});
                     }
                 }
+                glView.getRenderer().setCurrentPlateIndex(active);
                 glView.getRenderer().setInactivePlates(inactive, offsets);
                 glView.requestRender();
             }
@@ -1011,6 +1012,7 @@ public class BedFragment extends Fragment {
         android.util.Log.e("BedFragment", "Queueing setModel with finalNext pointer: " + (finalNext != null ? finalNext.getPointer() : "null"));
         glView.queueEvent(() -> {
             android.util.Log.e("BedFragment", "Executing setModel with finalNext pointer: " + (finalNext != null ? finalNext.getPointer() : "null"));
+            glView.getRenderer().setCurrentPlateIndex(currentPlateIndex);
             glView.getRenderer().setModel(finalNext);
             glView.requestRender();
         });

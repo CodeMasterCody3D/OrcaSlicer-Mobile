@@ -56,6 +56,11 @@ public class GLModel {
         Native.glmodel_init_background_triangles(pointer);
     }
 
+    /** Build a simple rectangular prism with origin at the front-left-bottom corner. */
+    public void initBox(float width, float depth, float height) {
+        Native.glmodel_init_box(pointer, width, depth, height);
+    }
+
     public void initBoundingBox(Model model, int i) {
         Native.glmodel_init_bounding_box(pointer, model.pointer, i);
     }

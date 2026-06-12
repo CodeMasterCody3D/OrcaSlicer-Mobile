@@ -67,6 +67,13 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
     private Model model;
 
+    // Draggable prime tower preview. Drawn in bed coordinates and committed to wipe_tower_x/y.
+    private GLModel primeTowerModel;
+    private int currentPlateIndex = 0;
+    private double primeTowerPreviewX = Double.NaN, primeTowerPreviewY = Double.NaN;
+    private double primeTowerWidth = -1, primeTowerDepth = -1, primeTowerHeight = 14;
+    private final ArrayList<GLModel.HitResult> primeTowerBedHits = new ArrayList<>();
+
     // Inactive plates of a multi-plate project. Each Model is bed-local; offsets are the plate's
     // grid position relative to the active plate (which always renders at the origin). Models are
     // owned by BedFragment; only the GLModels here are owned by the renderer.
@@ -215,6 +222,138 @@ public class GLRenderer implements GLSurfaceView.Renderer {
 
     public int getViewportHeight() {
         return viewportHeight;
+    }
+
+    public void setCurrentPlateIndex(int currentPlateIndex) {
+        this.currentPlateIndex = Math.max(0, currentPlateIndex);
+        primeTowerPreviewX = Double.NaN;
+        primeTowerPreviewY = Double.NaN;
+    }
+
+    private static double parseDouble(String value, double fallback) {
+        if (value == null) return fallback;
+        try {
+            return Double.parseDouble(value.trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static String formatDouble(double value) {
+        if (Math.abs(value - Math.rint(value)) < 0.0001) return String.valueOf((int)Math.rint(value));
+        return String.format(java.util.Locale.US, "%.3f", value).replaceAll("0+$", "").replaceAll("\\.$", "");
+    }
+
+    private static String vectorValue(String value, int index, double fallback) {
+        if (value == null || value.trim().isEmpty()) return formatDouble(fallback);
+        String[] parts = value.split("[,;]");
+        int i = Math.max(0, Math.min(index, parts.length - 1));
+        return parts[i].trim();
+    }
+
+    private static String vectorWithValue(String value, int index, double replacement) {
+        int n = Math.max(index + 1, value == null || value.trim().isEmpty() ? 1 : value.split("[,;]").length);
+        String[] out = new String[n];
+        String[] parts = value == null || value.trim().isEmpty() ? new String[0] : value.split("[,;]");
+        for (int i = 0; i < n; i++) {
+            out[i] = i < parts.length && !parts[i].trim().isEmpty() ? parts[i].trim() : (parts.length > 0 ? parts[Math.max(0, parts.length - 1)].trim() : "15");
+        }
+        out[index] = formatDouble(replacement);
+        return android.text.TextUtils.join(",", out);
+    }
+
+    private String configValue(ru.ytkab0bp.slicebeam.config.ConfigObject cfg, String key, String fallback) {
+        String v = cfg != null ? cfg.get(key) : null;
+        return v != null ? v : fallback;
+    }
+
+    private boolean boolConfig(ru.ytkab0bp.slicebeam.config.ConfigObject cfg, String key, boolean fallback) {
+        String v = configValue(cfg, key, fallback ? "1" : "0");
+        if (v == null) return fallback;
+        v = v.trim().toLowerCase(java.util.Locale.US);
+        return "1".equals(v) || "true".equals(v) || "yes".equals(v) || "on".equals(v);
+    }
+
+    private boolean isPrimeTowerEnabled(ru.ytkab0bp.slicebeam.config.ConfigObject cfg) {
+        if (cfg == null) return false;
+        if (cfg.has("enable_prime_tower")) return boolConfig(cfg, "enable_prime_tower", false);
+        return boolConfig(cfg, "wipe_tower", false);
+    }
+
+    private double towerX(ru.ytkab0bp.slicebeam.config.ConfigObject cfg) {
+        if (!Double.isNaN(primeTowerPreviewX)) return primeTowerPreviewX;
+        return parseDouble(vectorValue(configValue(cfg, "wipe_tower_x", "15"), currentPlateIndex, 15), 15);
+    }
+
+    private double towerY(ru.ytkab0bp.slicebeam.config.ConfigObject cfg) {
+        if (!Double.isNaN(primeTowerPreviewY)) return primeTowerPreviewY;
+        return parseDouble(vectorValue(configValue(cfg, "wipe_tower_y", "15"), currentPlateIndex, 15), 15);
+    }
+
+    private double towerWidth(ru.ytkab0bp.slicebeam.config.ConfigObject cfg) {
+        double width = parseDouble(configValue(cfg, "prime_tower_width", null), Double.NaN);
+        if (Double.isNaN(width)) width = parseDouble(configValue(cfg, "wipe_tower_width", null), 35);
+        return Math.max(8, Math.min(120, width));
+    }
+
+    private double towerDepth(ru.ytkab0bp.slicebeam.config.ConfigObject cfg, double width) {
+        String matrix = configValue(cfg, "flush_volumes_matrix", "");
+        double max = 0;
+        if (matrix != null) {
+            for (String part : matrix.split("[,;]")) max = Math.max(max, parseDouble(part, 0));
+        }
+        if (max <= 0) max = 280;
+        // Approximate the printed footprint length from purge volume so the visual marker responds
+        // when the desktop-style flush-volume matrix is edited.
+        return Math.max(width, Math.min(180, max / Math.max(1, width) * 6.0));
+    }
+
+    private Vec3d raycastBed(float screenX, float screenY) {
+        if (bed == null || !bed.isValid()) return null;
+        bed.getRaycaster().raycast(this, primeTowerBedHits, screenX, screenY);
+        if (primeTowerBedHits.isEmpty()) return null;
+        return primeTowerBedHits.get(0).position;
+    }
+
+    public boolean tryStartPrimeTowerDrag(float screenX, float screenY) {
+        if (isViewerEnabled || bed == null || !bed.isValid()) return false;
+        ru.ytkab0bp.slicebeam.config.ConfigObject cfg = SliceBeam.buildCurrentConfigObject();
+        if (!isPrimeTowerEnabled(cfg)) return false;
+        Vec3d p = raycastBed(screenX, screenY);
+        if (p == null) return false;
+        double w = towerWidth(cfg), d = towerDepth(cfg, w);
+        double x = towerX(cfg), y = towerY(cfg);
+        double pad = Math.max(8, Math.min(w, d) * 0.35);
+        if (p.x < x - pad || p.x > x + w + pad || p.y < y - pad || p.y > y + d + pad) return false;
+        primeTowerPreviewX = x;
+        primeTowerPreviewY = y;
+        return true;
+    }
+
+    public boolean dragPrimeTower(float screenX, float screenY) {
+        if (Double.isNaN(primeTowerPreviewX) || Double.isNaN(primeTowerPreviewY)) return false;
+        Vec3d p = raycastBed(screenX, screenY);
+        if (p == null) return false;
+        ru.ytkab0bp.slicebeam.config.ConfigObject cfg = SliceBeam.buildCurrentConfigObject();
+        double w = towerWidth(cfg), d = towerDepth(cfg, w);
+        Vec3d min = bed.getVolumeMin(), max = bed.getVolumeMax();
+        primeTowerPreviewX = Math.max(min.x, Math.min(max.x - w, p.x - w / 2.0));
+        primeTowerPreviewY = Math.max(min.y, Math.min(max.y - d, p.y - d / 2.0));
+        return true;
+    }
+
+    public boolean finishPrimeTowerDrag(boolean commit) {
+        if (Double.isNaN(primeTowerPreviewX) || Double.isNaN(primeTowerPreviewY)) return false;
+        if (commit) {
+            ru.ytkab0bp.slicebeam.config.ConfigObject cfg = SliceBeam.buildCurrentConfigObject();
+            String xs = vectorWithValue(configValue(cfg, "wipe_tower_x", "15"), currentPlateIndex, primeTowerPreviewX);
+            String ys = vectorWithValue(configValue(cfg, "wipe_tower_y", "15"), currentPlateIndex, primeTowerPreviewY);
+            SliceBeam.LIVE_DIFF_PRINT.put("wipe_tower_x", xs);
+            SliceBeam.LIVE_DIFF_PRINT.put("wipe_tower_y", ys);
+        }
+        primeTowerPreviewX = Double.NaN;
+        primeTowerPreviewY = Double.NaN;
+        return true;
     }
 
     public void setGCodeViewer(GCodeProcessorResult result) {
@@ -441,6 +580,8 @@ public class GLRenderer implements GLSurfaceView.Renderer {
                 }
             }
         }
+
+        drawPrimeTowerPreview(viewMatrix);
 
         if (isViewerEnabled) {
             if (viewer == null) {
@@ -919,6 +1060,42 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         }
 
         flat.stopUsing();
+    }
+
+    private void drawPrimeTowerPreview(double[] viewMatrix) {
+        if (isViewerEnabled || bed == null || !bed.isValid()) return;
+        ru.ytkab0bp.slicebeam.config.ConfigObject cfg = SliceBeam.buildCurrentConfigObject();
+        if (!isPrimeTowerEnabled(cfg)) return;
+        double x = towerX(cfg), y = towerY(cfg);
+        double w = towerWidth(cfg), d = towerDepth(cfg, w), h = primeTowerHeight;
+        if (primeTowerModel == null) {
+            primeTowerModel = new GLModel();
+        }
+        if (!primeTowerModel.isInitialized() || Math.abs(primeTowerWidth - w) > 0.01 || Math.abs(primeTowerDepth - d) > 0.01) {
+            primeTowerModel.reset();
+            primeTowerModel.initBox((float)w, (float)d, (float)h);
+            primeTowerWidth = w;
+            primeTowerDepth = d;
+        }
+
+        GLShaderProgram shader = shadersManager.get(GLShadersManager.SHADER_GOURAUD_LIGHT);
+        shader.startUsing();
+        shader.setUniform("emission_factor", 0.45f);
+        shader.setUniformMatrix4fv("projection_matrix", projectionMatrix);
+        DoubleMatrix.setIdentityM(modelMatrix, 0);
+        DoubleMatrix.translateM(modelMatrix, 0, x, y, 0);
+        DoubleMatrix.multiplyMM(outModelMatrix, 0, viewMatrix, 0, modelMatrix, 0);
+        shader.setUniformMatrix4fv("view_model_matrix", outModelMatrix);
+        Slic3rUtils.calcViewNormalMatrix(viewMatrix, modelMatrix, normalMatrix);
+        shader.setUniformMatrix3fv("view_normal_matrix", normalMatrix);
+        shader.setUniform("volume_mirrored", false);
+        boolean blend = glIsEnabled(GL_BLEND);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        primeTowerModel.setColor(ColorUtils.setAlphaComponent(Color.YELLOW, Double.isNaN(primeTowerPreviewX) ? 150 : 225));
+        primeTowerModel.render();
+        if (!blend) glDisable(GL_BLEND);
+        shader.stopUsing();
     }
 
     public boolean deleteObject(int i) {
@@ -1602,6 +1779,10 @@ public class GLRenderer implements GLSurfaceView.Renderer {
         if (selectionModel != null) {
             selectionModel.release();
             selectionModel = null;
+        }
+        if (primeTowerModel != null) {
+            primeTowerModel.release();
+            primeTowerModel = null;
         }
         if (bed != null) {
             bed.release();

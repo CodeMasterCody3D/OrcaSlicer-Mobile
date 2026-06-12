@@ -107,6 +107,11 @@ public abstract class ProfileListFragment extends Fragment {
     private final List<OptionWrapper> tabTitles = new ArrayList<>();
     private int selectedTab = 0;
 
+    /** Optional quick controls shown between filament colors and the category tabs. */
+    protected View createBelowFilamentPaletteView(Context ctx) {
+        return null;
+    }
+
     /** Profile config screens override this to render categories as horizontal tabbed pages. */
     protected boolean useTabs() {
         return false;
@@ -175,6 +180,13 @@ public abstract class ProfileListFragment extends Fragment {
                 leftMargin = rightMargin = 0;
                 bottomMargin = ViewUtils.dp(4);
             }});
+            View belowPalette = createBelowFilamentPaletteView(ctx);
+            if (belowPalette != null) {
+                ll.addView(belowPalette, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT) {{
+                    leftMargin = rightMargin = ViewUtils.dp(12);
+                    bottomMargin = ViewUtils.dp(6);
+                }});
+            }
         }
 
         if (useTabs()) {

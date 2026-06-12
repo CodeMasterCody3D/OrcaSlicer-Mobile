@@ -52,6 +52,7 @@ public class GLView extends GLSurfaceView implements IThemeView {
     private boolean longClickMoved;
     private boolean isScaling;
     private boolean fillBedInProgress;
+    private boolean primeTowerGesture;
     private int longClickTargetObject = -1;
 
     private OnModelLongPressListener onModelLongPressListener;
@@ -432,6 +433,15 @@ public class GLView extends GLSurfaceView implements IThemeView {
                 longClickMoved = false;
 
                 float renderScale = Prefs.getRenderScale();
+                if (renderer.tryStartPrimeTowerDrag(lastX * renderScale, lastY * renderScale)) {
+                    removeCallbacks(longClick);
+                    removeCallbacks(bedLongClick);
+                    primeTowerGesture = true;
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                    requestRender();
+                    return true;
+                }
+
                 int j = renderer.raycastObjectIndex(lastX * renderScale, lastY * renderScale);
                 if (renderer.getGcodeResult() == null && j != -1) {
                     longClickTargetObject = j;
@@ -446,6 +456,13 @@ public class GLView extends GLSurfaceView implements IThemeView {
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_CANCEL) {
             removeCallbacks(longClick);
             removeCallbacks(bedLongClick);
+            if (primeTowerGesture) {
+                renderer.finishPrimeTowerDrag(action != MotionEvent.ACTION_CANCEL);
+                primeTowerGesture = false;
+                onePointerGesture = false;
+                requestRender();
+                return true;
+            }
             if (longClickGesture) {
                 if (longClickMoved) {
                     queueEvent(()->{
@@ -490,6 +507,15 @@ public class GLView extends GLSurfaceView implements IThemeView {
             return true;
         }
         if (action == MotionEvent.ACTION_MOVE) {
+            if (primeTowerGesture && e.getPointerCount() == 1) {
+                float renderScale = Prefs.getRenderScale();
+                if (renderer.dragPrimeTower(e.getX() * renderScale, e.getY() * renderScale)) {
+                    requestRender();
+                }
+                lastX = e.getX();
+                lastY = e.getY();
+                return true;
+            }
             if (e.getPointerCount() == 2) {
                 float x = (e.getX(0) + e.getX(1)) / 2f;
                 float y = (e.getY(0) + e.getY(1)) / 2f;

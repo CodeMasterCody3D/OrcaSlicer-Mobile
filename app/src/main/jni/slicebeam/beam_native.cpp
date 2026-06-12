@@ -1133,11 +1133,15 @@ extern "C" {
                 const ConfigOption* nd = config.option("nozzle_diameter");
                 if (nd && static_cast<const ConfigOptionFloats*>(nd)->values.size() <= 1) {
                     config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(true));
-                    config.set_key_value("single_extruder_multi_material_priming", new ConfigOptionBool(true));
+                    if (config.option("single_extruder_multi_material_priming", false) == nullptr) {
+                        config.set_key_value("single_extruder_multi_material_priming", new ConfigOptionBool(true));
+                    }
                 }
 
                 // Enable a prime/wipe tower for reliable filament changes.
-                config.set_key_value("enable_prime_tower", new ConfigOptionBool(true));
+                if (config.option("enable_prime_tower", false) == nullptr) {
+                    config.set_key_value("enable_prime_tower", new ConfigOptionBool(true));
+                }
 
                 int fdSize = 0;
                 if (auto* fd = dynamic_cast<const ConfigOptionFloats*>(config.option("filament_diameter", false))) fdSize = (int) fd->values.size();
@@ -1454,6 +1458,44 @@ extern "C" {
         // indices
         init_data.add_triangle(0, 1, 2);
         init_data.add_triangle(2, 3, 0);
+
+        ref->model.init_from(std::move(init_data));
+    }
+
+    JNIEXPORT void JNICALL Java_ru_ytkab0bp_slicebeam_slic3r_Native_glmodel_1init_1box(JNIEnv* env, jclass, jlong ptr, jfloat width, jfloat depth, jfloat height) {
+        GLModelRef* ref = (GLModelRef*) (intptr_t) ptr;
+        ref->model.reset();
+        ref->mesh.clear();
+        ref->emesh = nullptr;
+        ref->normals.clear();
+
+        const float w = std::max(1.0f, (float)width);
+        const float d = std::max(1.0f, (float)depth);
+        const float h = std::max(1.0f, (float)height);
+
+        GLModel::Geometry init_data;
+        init_data.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3N3 };
+        init_data.reserve_vertices(24);
+        init_data.reserve_indices(36);
+
+        auto add_face = [&](const Vec3f& normal, const Vec3f& a, const Vec3f& b, const Vec3f& c, const Vec3f& e) {
+            unsigned int base = (unsigned int)init_data.vertices_count();
+            init_data.add_vertex(a, normal);
+            init_data.add_vertex(b, normal);
+            init_data.add_vertex(c, normal);
+            init_data.add_vertex(e, normal);
+            init_data.add_triangle(base + 0, base + 1, base + 2);
+            init_data.add_triangle(base + 2, base + 3, base + 0);
+        };
+
+        Vec3f p000(0, 0, 0), p100(w, 0, 0), p110(w, d, 0), p010(0, d, 0);
+        Vec3f p001(0, 0, h), p101(w, 0, h), p111(w, d, h), p011(0, d, h);
+        add_face(Vec3f(0, 0, -1), p010, p110, p100, p000); // bottom
+        add_face(Vec3f(0, 0,  1), p001, p101, p111, p011); // top
+        add_face(Vec3f(0, -1, 0), p000, p100, p101, p001); // front
+        add_face(Vec3f(1,  0, 0), p100, p110, p111, p101); // right
+        add_face(Vec3f(0,  1, 0), p110, p010, p011, p111); // back
+        add_face(Vec3f(-1, 0, 0), p010, p000, p001, p011); // left
 
         ref->model.init_from(std::move(init_data));
     }

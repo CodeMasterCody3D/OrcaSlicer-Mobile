@@ -132,7 +132,7 @@ public final class OrcaPrintSettingsBuilder {
                 items -> {
                     addSection(items, "Prime tower", "enable_prime_tower", "wipe_tower_x", "wipe_tower_y", "prime_tower_width", "wipe_tower_rotation_angle", "prime_tower_brim_width", "wipe_tower_bridging", "wipe_tower_cone_angle", "wipe_tower_extra_spacing", "wipe_tower_extra_flow", "wipe_tower_no_sparse_layers", "single_extruder_multi_material_priming", "prime_tower_infill_gap", "prime_tower_flat_ironing", "prime_tower_enable_framework", "prime_volume", "purge_in_prime_tower");
                     addSection(items, "Filament for Features", "wall_filament", "sparse_infill_filament", "solid_infill_filament", "support_filament", "support_interface_filament", "wipe_tower_filament");
-                    addSection(items, "Flushing", "flush_into_infill", "flush_into_objects", "flush_into_support", "flush_multiplier");
+                    addSection(items, "Flushing", "flush_into_infill", "flush_into_objects", "flush_into_support", "flush_volumes_matrix", "flush_multiplier");
                     addSection(items, "Ooze prevention", "ooze_prevention", "standby_temperature_delta");
                     addSection(items, "Advanced", "interface_shells", "mmu_segmented_region_max_width", "mmu_segmented_region_interlocking_depth");
                 }

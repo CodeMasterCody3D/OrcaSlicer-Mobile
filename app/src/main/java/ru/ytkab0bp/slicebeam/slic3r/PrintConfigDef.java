@@ -142,8 +142,16 @@ public class PrintConfigDef {
         put("xy_size_compensation",                "XY size compensation");
         put("elefant_foot_compensation",           "Elephant foot compensation");
         // Prime tower
+        put("enable_prime_tower",                  "Enable prime tower");
         put("wipe_tower",                          "Enable prime tower");
+        put("wipe_tower_x",                        "Prime tower X");
+        put("wipe_tower_y",                        "Prime tower Y");
         put("wipe_tower_width",                    "Prime tower width");
+        put("prime_tower_width",                   "Prime tower width");
+        put("prime_tower_brim_width",              "Prime tower brim width");
+        put("flush_volumes_matrix",                "Flush volumes");
+        put("flush_multiplier",                    "Flush multiplier");
+        put("single_extruder_multi_material_priming", "Prime all filaments");
     }};
 
     public static PrintConfigDef getInstance() {
