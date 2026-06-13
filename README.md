@@ -1,6 +1,6 @@
 # OrcaSlicer Mobile
 
-please consider donating.
+Please consider donating.
 
 [Donate to OrcaSlicer Mobile for Android Via PayPal](https://www.paypal.com/donate/?business=E37Z2QEXT7AQW&no_recurring=0&item_name=I+have+built+orcaslicer+mobile+for+Android.+I+need+your+help+to+keep+paying+for+my+ai+tools+to+keep+providing+bug+fixes.+Thanks&currency_code=USD)
 
