@@ -13,8 +13,8 @@ android {
         applicationId "com.codemastercody3d.orcaslicermobile"
         minSdk 21
         targetSdk 35
-        versionCode 3
-        versionName "0.4.5"
+        versionCode 4
+        versionName "0.4.6"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders = [fileProviderAuthority: "${applicationId}.provider"]

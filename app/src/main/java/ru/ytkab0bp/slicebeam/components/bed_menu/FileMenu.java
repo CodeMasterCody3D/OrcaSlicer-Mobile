@@ -114,14 +114,11 @@ public class FileMenu extends ListBedMenu {
 
                         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                         i.addCategory(Intent.CATEGORY_OPENABLE);
+                        // Don't filter by EXTRA_MIME_TYPES: model formats like .3mf have no standard
+                        // MIME type, and providers report inconsistent types (e.g. Downloads stores the
+                        // server's Content-Type, often application/zip for .3mf), which greys the file out
+                        // in the picker. Allow any file; loadFile() validates by extension afterward.
                         i.setType("*/*");
-                        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
-                                "model/stl", "application/vnd.ms-pki.stl", "application/sla",
-                                "model/obj", "application/x-tgif", "text/plain",
-                                "model/3mf", "application/3mf", "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
-                                "model/amf", "application/x-amf", "image/svg+xml", "application/xml",
-                                "application/x-gcode", "text/x.gcode", "application/octet-stream"
-                        });
                         act.startActivityForResult(i, MainActivity.REQUEST_CODE_OPEN_FILE);
                     }
                 }),
