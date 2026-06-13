@@ -1,5 +1,16 @@
 # OrcaSlicer Mobile
 
+please consider donating.
+
+[Donate to OrcaSlicer Mobile for Android Via PayPal](https://www.paypal.com/donate/?business=E37Z2QEXT7AQW&no_recurring=0&item_name=I+have+built+orcaslicer+mobile+for+Android.+I+need+your+help+to+keep+paying+for+my+ai+tools+to+keep+providing+bug+fixes.+Thanks&currency_code=USD)
+
+
+[Donate to OrcaSlicer Mobile for Android Via Patreon](https://www.patreon.com/cw/CodeMasterCody3D)
+
+[Donate to OrcaSlicer Mobile for Android Via Cash app](https://cash.app/$codyddixon)
+
+
+
 A 3D printing slicer for Android, powered by the real **OrcaSlicer** engine.
 
 OrcaSlicer Mobile takes the excellent Android slicer shell from [Slice Beam](https://github.com/utkabobr/SliceBeam) and replaces its slicing core with a full port of [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer)'s `libslic3r` — so the G-code you slice on your phone comes from the same engine you use on the desktop.
